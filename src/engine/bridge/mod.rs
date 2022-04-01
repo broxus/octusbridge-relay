@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use eth_ton_abi_converter::*;
 use nekoton_abi::*;
 use solana_program::hash::Hash;
+use solana_sdk::signature::Keypair;
 use tiny_adnl::utils::*;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
@@ -908,8 +909,8 @@ impl Bridge {
 
         let event_init_data = TonSolEventContract(&contract).event_init_data()?;
 
-        let _payload_id = Hash::new_from_array(event_init_data.vote_data.payload_id.inner());
-        let _round_number = base_event_contract.round_number()?;
+        let payload_id = Hash::new_from_array(event_init_data.vote_data.payload_id.inner());
+        let round_number = base_event_contract.round_number()?;
 
         match sol_subscriber
             .verify_ton_sol_event(event_init_data.vote_data)
@@ -917,7 +918,10 @@ impl Bridge {
         {
             // Confirm event if transaction was found
             Ok(VerificationStatus::Exists) => {
-                // sol_subscriber.vote_for_withdraw_request(?, payload_id, round_number) // TODO
+                let keypair = Keypair::from_bytes(&self.context.keystore.ton.keypair())?;
+                sol_subscriber
+                    .vote_for_withdraw_request(&keypair, payload_id, round_number)
+                    .await?
             }
             // Skip event otherwise
             Ok(VerificationStatus::NotExists) | Err(_) => {
