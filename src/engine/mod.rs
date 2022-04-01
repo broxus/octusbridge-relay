@@ -92,6 +92,7 @@ impl Engine {
         *self.staking.lock() = Some(staking);
 
         self.context.eth_subscribers.start();
+        self.context.sol_subscriber.start();
 
         // Done
         Ok(())
@@ -154,6 +155,7 @@ pub struct EngineContext {
     pub ton_subscriber: Arc<TonSubscriber>,
     pub ton_engine: Arc<ton_indexer::Engine>,
     pub eth_subscribers: Arc<EthSubscriberRegistry>,
+    pub sol_subscriber: Arc<SolSubscriber>,
 }
 
 impl Drop for EngineContext {
@@ -196,6 +198,10 @@ impl EngineContext {
             .await
             .context("Failed to create EVM networks registry")?;
 
+        let sol_subscriber = SolSubscriber::new(settings.sol_network.clone())
+            .await
+            .context("Failed to create Solana subscriber")?;
+
         Ok(Arc::new(Self {
             shutdown_requests_tx,
             staker_account_str,
@@ -206,6 +212,7 @@ impl EngineContext {
             ton_subscriber,
             ton_engine,
             eth_subscribers,
+            sol_subscriber,
         }))
     }
 

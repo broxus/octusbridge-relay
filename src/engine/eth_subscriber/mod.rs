@@ -19,6 +19,7 @@ use web3::{transports::Http, Transport};
 
 use self::models::*;
 use crate::config::*;
+use crate::engine::bridge::*;
 use crate::engine::keystore::*;
 use crate::engine::ton_contracts::*;
 use crate::utils::*;
@@ -762,6 +763,15 @@ enum PendingConfirmationStatus {
     Invalid,
 }
 
+impl From<VerificationStatus> for PendingConfirmationStatus {
+    fn from(status: VerificationStatus) -> Self {
+        match status {
+            VerificationStatus::Exists => Self::Valid,
+            VerificationStatus::NotExists => Self::Invalid,
+        }
+    }
+}
+
 type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
 
 fn parse_transaction_logs(
@@ -776,21 +786,6 @@ fn parse_transaction_logs(
                 None
             }
         })
-}
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum VerificationStatus {
-    Exists,
-    NotExists,
-}
-
-impl From<VerificationStatus> for PendingConfirmationStatus {
-    fn from(status: VerificationStatus) -> Self {
-        match status {
-            VerificationStatus::Exists => Self::Valid,
-            VerificationStatus::NotExists => Self::Invalid,
-        }
-    }
 }
 
 fn is_incomplete_message(error: &anyhow::Error) -> bool {
