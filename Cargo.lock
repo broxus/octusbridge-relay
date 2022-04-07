@@ -352,7 +352,7 @@ dependencies = [
 [[package]]
 name = "bridge-derive"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#b5c6593a6f1ee2618ee9e446a491c8ea32d8a93d"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
 dependencies = [
  "darling 0.13.1",
  "proc-macro2 1.0.36",
@@ -363,9 +363,11 @@ dependencies = [
 [[package]]
 name = "bridge-utils"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#b5c6593a6f1ee2618ee9e446a491c8ea32d8a93d"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
 dependencies = [
  "bincode",
+ "borsh",
+ "serde",
  "solana-program",
  "spl-associated-token-account",
  "spl-token",
@@ -1263,11 +1265,13 @@ dependencies = [
 [[package]]
 name = "eth-ton-abi-converter"
 version = "0.3.1"
-source = "git+https://github.com/broxus/eth-ton-abi-converter.git#23bc8f73dda8b41884325e65807b0a9672c85c1f"
+source = "git+https://github.com/broxus/eth-ton-abi-converter.git?branch=dev#0bd8edabe35befcaa82c78220660365ea0d65598"
 dependencies = [
  "anyhow",
  "base64 0.13.0",
+ "borsh",
  "ed25519-dalek 1.0.1 (git+https://github.com/broxus/ed25519-dalek.git)",
+ "either",
  "ethabi",
  "hex",
  "num-bigint",
@@ -1366,7 +1370,7 @@ checksum = "975ccf83d8d9d0d84682850a38c8169027be83368805971cc4f238c2b245bc98"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall 0.2.12",
+ "redox_syscall 0.2.13",
  "winapi",
 ]
 
@@ -3225,7 +3229,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7776223e2696f1aa4c6b0170e83212f47296a00424305117d013dfe86fb0fe55"
 dependencies = [
  "getrandom 0.2.6",
- "redox_syscall 0.2.12",
+ "redox_syscall 0.2.13",
  "thiserror",
 ]
 
@@ -3404,7 +3408,7 @@ dependencies = [
 [[package]]
 name = "round-loader"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#b5c6593a6f1ee2618ee9e446a491c8ea32d8a93d"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
 dependencies = [
  "bincode",
  "borsh",
@@ -4856,7 +4860,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "token-proxy"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#b5c6593a6f1ee2618ee9e446a491c8ea32d8a93d"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
 dependencies = [
  "bincode",
  "borsh",
@@ -4869,6 +4873,7 @@ dependencies = [
  "spl-associated-token-account",
  "spl-token",
  "thiserror",
+ "ton_types",
 ]
 
 [[package]]
