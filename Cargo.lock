@@ -352,7 +352,7 @@ dependencies = [
 [[package]]
 name = "bridge-derive"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
 dependencies = [
  "darling 0.13.1",
  "proc-macro2 1.0.36",
@@ -363,7 +363,7 @@ dependencies = [
 [[package]]
 name = "bridge-utils"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
 dependencies = [
  "bincode",
  "borsh",
@@ -3405,7 +3405,7 @@ dependencies = [
 [[package]]
 name = "round-loader"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
 dependencies = [
  "bincode",
  "borsh",
@@ -4857,7 +4857,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "token-proxy"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#9a3dbd405569a08ee34621cc588e72a94f60db18"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
 dependencies = [
  "bincode",
  "borsh",
