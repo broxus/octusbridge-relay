@@ -352,9 +352,9 @@ dependencies = [
 [[package]]
 name = "bridge-derive"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
 dependencies = [
- "darling 0.13.1",
+ "darling 0.13.4",
  "proc-macro2 1.0.36",
  "quote 1.0.17",
  "syn 1.0.90",
@@ -363,7 +363,7 @@ dependencies = [
 [[package]]
 name = "bridge-utils"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
 dependencies = [
  "bincode",
  "borsh",
@@ -859,12 +859,12 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.13.1"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0d720b8683f8dd83c65155f0530560cba68cd2bf395f6513a483caee57ff7f4"
+checksum = "a01d95850c592940db9b8194bc39f4bc0e89dee5c4265e4b1807c34a9aba453c"
 dependencies = [
- "darling_core 0.13.1",
- "darling_macro 0.13.1",
+ "darling_core 0.13.4",
+ "darling_macro 0.13.4",
 ]
 
 [[package]]
@@ -883,9 +883,9 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.13.1"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a340f241d2ceed1deb47ae36c4144b2707ec7dd0b649f894cb39bb595986324"
+checksum = "859d65a907b6852c9361e3185c862aae7fafd2887876799fa55f5f99dc40d610"
 dependencies = [
  "fnv",
  "ident_case",
@@ -908,11 +908,11 @@ dependencies = [
 
 [[package]]
 name = "darling_macro"
-version = "0.13.1"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72c41b3b7352feb3211a0d743dc5700a4e3b60f51bd2b368892d1e0f9a95f44b"
+checksum = "9c972679f83bdf9c42bd905396b6c3588a843a17f0f16dfcfa3e2c5d57441835"
 dependencies = [
- "darling_core 0.13.1",
+ "darling_core 0.13.4",
  "quote 1.0.17",
  "syn 1.0.90",
 ]
@@ -3405,7 +3405,7 @@ dependencies = [
 [[package]]
 name = "round-loader"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
 dependencies = [
  "bincode",
  "borsh",
@@ -4857,7 +4857,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "token-proxy"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#1639242c4d66533deb4af3d50580c8d415110ce2"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
 dependencies = [
  "bincode",
  "borsh",
