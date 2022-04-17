@@ -352,7 +352,7 @@ dependencies = [
 [[package]]
 name = "bridge-derive"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#cb42c9969f5d7871dd234ecc123e2478656ca1a7"
 dependencies = [
  "darling 0.13.4",
  "proc-macro2 1.0.36",
@@ -363,10 +363,11 @@ dependencies = [
 [[package]]
 name = "bridge-utils"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#cb42c9969f5d7871dd234ecc123e2478656ca1a7"
 dependencies = [
  "bincode",
  "borsh",
+ "bridge-derive",
  "serde",
  "solana-program",
  "spl-associated-token-account",
@@ -3291,6 +3292,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "solana-bridge",
  "solana-client",
  "solana-sdk",
  "tempfile",
@@ -3298,7 +3300,6 @@ dependencies = [
  "tiny-adnl",
  "tiny-bip39 0.8.0",
  "tiny-hderive",
- "token-proxy",
  "tokio",
  "tokio-util",
  "ton-indexer",
@@ -3405,7 +3406,7 @@ dependencies = [
 [[package]]
 name = "round-loader"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#cb42c9969f5d7871dd234ecc123e2478656ca1a7"
 dependencies = [
  "bincode",
  "borsh",
@@ -3414,6 +3415,7 @@ dependencies = [
  "serde",
  "solana-program",
  "thiserror",
+ "ton_types",
 ]
 
 [[package]]
@@ -3824,6 +3826,18 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk",
  "thiserror",
+]
+
+[[package]]
+name = "solana-bridge"
+version = "0.1.0"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#cb42c9969f5d7871dd234ecc123e2478656ca1a7"
+dependencies = [
+ "borsh",
+ "bridge-utils",
+ "round-loader",
+ "solana-program",
+ "token-proxy",
 ]
 
 [[package]]
@@ -4857,7 +4871,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "token-proxy"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#db52d5cfeccaa633a062eab5f0fc740c909389d7"
+source = "git+ssh://git@gitlab.dexpa.io/solana-everscale-bridge/solana-bridge#cb42c9969f5d7871dd234ecc123e2478656ca1a7"
 dependencies = [
  "bincode",
  "borsh",
