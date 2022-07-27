@@ -26,39 +26,40 @@ reset_adnl="false"
 while [[ $# -gt 0 ]]; do
   key="$1"
   case $key in
-      -h|--help)
-        print_help
-        exit 0
-      ;;
-      -f|--force)
-        force="true"
-        shift # past argument
-      ;;
-      -s|--sync)
-        restart_timesyncd="true"
-        shift # past argument
-      ;;
-      -r|--reset-adnl)
-        reset_adnl="true"
-        shift # past argument
-      ;;
-      -t|--type)
-        setup_type="$2"
-        shift # past argument
-        if [ "$#" -gt 0 ]; then shift;
-        else
-          echo 'ERROR: Expected installation type'
-          echo ''
-          print_help
-          exit 1
-        fi
-      ;;
-      *) # unknown option
-        echo 'ERROR: Unknown option'
-        echo ''
-        print_help
-        exit 1
-      ;;
+  -h | --help)
+    print_help
+    exit 0
+    ;;
+  -f | --force)
+    force="true"
+    shift # past argument
+    ;;
+  -s | --sync)
+    restart_timesyncd="true"
+    shift # past argument
+    ;;
+  -r | --reset-adnl)
+    reset_adnl="true"
+    shift # past argument
+    ;;
+  -t | --type)
+    setup_type="$2"
+    shift # past argument
+    if [ "$#" -gt 0 ]; then
+      shift
+    else
+      echo 'ERROR: Expected installation type'
+      echo ''
+      print_help
+      exit 1
+    fi
+    ;;
+  *) # unknown option
+    echo 'ERROR: Unknown option'
+    echo ''
+    print_help
+    exit 1
+    ;;
   esac
 done
 
@@ -74,7 +75,13 @@ sudo systemctl stop relay
 
 if [[ "$force" == "true" ]]; then
   echo "INFO: removing relay db"
-  sudo rm -rf /var/db/relay
+  db_path=$(yq <config.yaml '.node_settings.db_path' | tr -d '\"' | tr -d "\'") # it's a mandatory field so it safe to assume it's not null
+  read -p "Are you sure? DB db_path: $db_path. Y/N " -n 1 -r
+
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    printf "\n%s\n" "Removing $db_path"
+    sudo rm -rf "${db_path}"
+  fi
 else
   echo 'INFO: skipping "/var/db/relay" deletion'
 fi
@@ -88,7 +95,7 @@ if [[ "$setup_type" == "native" ]]; then
   sudo cp "$REPO_DIR/target/release/relay" /usr/local/bin/relay
 
 elif [[ "$setup_type" == "docker" ]]; then
-  if ! sudo docker info > /dev/null 2>&1; then
+  if ! sudo docker info >/dev/null 2>&1; then
     echo 'ERROR: This script uses docker, and it is not running or not configured properly.'
     echo '       Please start docker and try again'
     exit 1
