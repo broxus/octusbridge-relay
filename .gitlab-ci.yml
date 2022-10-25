@@ -3,9 +3,6 @@ include:
     ref: main
     file: "/templates/debian-build.gitlab-ci.yaml"
 
-variables:
-  CARGO_HOME: $CI_PROJECT_DIR/cargo
-
 stages:
   - debian-build
 
