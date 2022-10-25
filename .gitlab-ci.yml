@@ -1,13 +1,13 @@
 include:
   - project: "infrastructure/gitlab-ci"
     ref: main
-    file: "/templates/debian-build.gitlab-ci.yaml"
+    file: "/templates/cloudbuild-common.gitlab-ci.yaml"
 
 stages:
-  - debian-build
+  - cloudbuild
 
-debain-build:package:
-  extends: .debian-build:common
+cloudbuild:package:
+  extends: .cloudbuild:deb-package
   before_script:
     - cp contrib/relay.native.service contrib/service
     - wget -O contrib/global.config.json https://raw.githubusercontent.com/tonlabs/main.ton.dev/master/configs/ton-global.config.json
