@@ -7,6 +7,6 @@ stages:
   - debian-build
 
 debain-build:package:
-  extends: .debain-build:common
+  extends: .debian-build:common
   only:
     - feature/ci
