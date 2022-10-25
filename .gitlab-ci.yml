@@ -8,3 +8,6 @@ stages:
 
 debain-build:package:
   extends: .debian-build:common
+  before_script:
+    - cp contrib/relay.native.service contrib/service
+    - wget -O contrib/global.config.json https://raw.githubusercontent.com/tonlabs/main.ton.dev/master/configs/ton-global.config.json
