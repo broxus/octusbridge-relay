@@ -8,11 +8,13 @@ use rand::Rng;
 use secstr::SecUtf8;
 use serde::{Deserialize, Serialize};
 
+pub use self::btc_config::*;
 pub use self::eth_config::*;
 pub use self::sol_config::*;
 pub use self::stored_keys::*;
 pub use self::verification_state::*;
 
+mod btc_config;
 mod eth_config;
 mod sol_config;
 mod stored_keys;
@@ -74,6 +76,10 @@ pub struct BridgeConfig {
     /// Solana network settings
     #[serde(default)]
     pub sol_network: Option<SolConfig>,
+
+    /// Solana network settings
+    #[serde(default)]
+    pub btc_network: Option<BtcConfig>,
 
     /// ETH address verification settings
     #[serde(default)]

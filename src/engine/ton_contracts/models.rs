@@ -98,6 +98,48 @@ pub struct TonSolEventVoteData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct BtcTonEventInitData {
+    #[abi]
+    pub vote_data: BtcTonEventVoteData,
+    #[abi(with = "address_only_hash")]
+    pub configuration: UInt256,
+    #[abi(with = "address_only_hash")]
+    pub staking: UInt256,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct BtcTonEventVoteData {
+    #[abi(uint256)]
+    pub tx_id: UInt256,
+    #[abi(uint32)]
+    pub block_height: u32,
+    #[abi(with = "address_only_hash")]
+    pub receiver: UInt256,
+    #[abi(uint64)]
+    pub amount: u64,
+    #[abi(uint256)]
+    pub sender: UInt256,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct TonBtcEventInitData {
+    #[abi]
+    pub vote_data: TonBtcEventVoteData,
+    #[abi(with = "address_only_hash")]
+    pub configuration: UInt256,
+    #[abi(with = "address_only_hash")]
+    pub staking: UInt256,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct TonBtcEventVoteData {
+    #[abi(uint256)]
+    pub receiver: UInt256,
+    #[abi(uint64)]
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct ExecuteAccount {
     #[abi(uint256)]
     pub account: UInt256,
@@ -163,6 +205,26 @@ pub struct TonSolEventConfigurationDetails {
     pub meta: ton_types::Cell,
 }
 
+#[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
+pub struct BtcTonEventConfigurationDetails {
+    #[abi]
+    pub basic_configuration: BasicConfiguration,
+    #[abi]
+    pub network_configuration: BtcTonEventConfiguration,
+    #[abi(cell)]
+    pub meta: ton_types::Cell,
+}
+
+#[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
+pub struct TonBtcEventConfigurationDetails {
+    #[abi]
+    pub basic_configuration: BasicConfiguration,
+    #[abi]
+    pub network_configuration: TonBtcEventConfiguration,
+    #[abi(cell)]
+    pub meta: ton_types::Cell,
+}
+
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct BasicConfiguration {
     #[abi(with = "bytes_as_string")]
@@ -197,6 +259,26 @@ pub struct TonEthEventConfiguration {
     pub event_emitter: UInt256,
     #[abi(with = "uint160_bytes")]
     pub proxy: [u8; 20],
+    #[abi(uint32)]
+    pub start_timestamp: u32,
+    #[abi(uint32)]
+    pub end_timestamp: u32,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct BtcTonEventConfiguration {
+    #[abi(with = "address_only_hash")]
+    pub proxy: UInt256,
+    #[abi(uint64)]
+    pub start_timestamp: u64,
+    #[abi(uint64)]
+    pub end_timestamp: u64,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct TonBtcEventConfiguration {
+    #[abi(with = "address_only_hash")]
+    pub event_emitter: UInt256,
     #[abi(uint32)]
     pub start_timestamp: u32,
     #[abi(uint32)]

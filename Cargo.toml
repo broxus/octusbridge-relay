@@ -12,6 +12,8 @@ argh = "0.1"
 async-trait = "0.1"
 atty = "0.2"
 base64 = "0.13"
+bigdecimal = "0.3.0"
+bitcoin = "0.29.2"
 borsh = "0.9.3"
 broxus-util = { version = "0.1.4", default-features = false, features = [
     "serde",
@@ -25,6 +27,7 @@ config = { version = "0.13.1", default-features = false, features = ["yaml"] }
 dashmap = "5.3"
 dialoguer = "0.10.0"
 either = "1.6.1"
+esplora-client = "0.2.0"
 everscale-network = "0.4"
 futures-util = "0.3"
 hex = "0.4"
