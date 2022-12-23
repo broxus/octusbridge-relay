@@ -8,6 +8,8 @@ use crate::utils::*;
 pub mod base_event_configuration_contract;
 pub mod base_event_contract;
 pub mod bridge_contract;
+pub mod btc_ton_event_configuration_contract;
+pub mod btc_ton_event_contract;
 pub mod connector_contract;
 pub mod elections_contract;
 pub mod eth_ton_event_configuration_contract;
@@ -16,6 +18,8 @@ pub mod relay_round_contract;
 pub mod sol_ton_event_configuration_contract;
 pub mod sol_ton_event_contract;
 pub mod staking_contract;
+pub mod ton_btc_event_configuration_contract;
+pub mod ton_btc_event_contract;
 pub mod ton_eth_event_configuration_contract;
 pub mod ton_eth_event_contract;
 pub mod ton_sol_event_configuration_contract;
@@ -98,6 +102,32 @@ pub struct TonSolEventContract<'a>(pub &'a ExistingContract);
 impl TonSolEventContract<'_> {
     pub fn event_init_data(&self) -> Result<TonSolEventInitData> {
         let function = ton_sol_event_contract::get_event_init_data();
+        let event_init_data = self
+            .0
+            .run_local_responsible(function, &[answer_id()])?
+            .unpack_first()?;
+        Ok(event_init_data)
+    }
+}
+
+pub struct BtcTonEventContract<'a>(pub &'a ExistingContract);
+
+impl BtcTonEventContract<'_> {
+    pub fn event_init_data(&self) -> Result<BtcTonEventInitData> {
+        let function = btc_ton_event_contract::get_event_init_data();
+        let event_init_data = self
+            .0
+            .run_local_responsible(function, &[answer_id()])?
+            .unpack_first()?;
+        Ok(event_init_data)
+    }
+}
+
+pub struct TonBtcEventContract<'a>(pub &'a ExistingContract);
+
+impl TonBtcEventContract<'_> {
+    pub fn event_init_data(&self) -> Result<TonBtcEventInitData> {
+        let function = ton_btc_event_contract::get_event_init_data();
         let event_init_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?

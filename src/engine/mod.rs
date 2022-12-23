@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use ton_block::Serializable;
 
 use self::bridge::*;
+use self::btc_subscriber::*;
 use self::eth_subscriber::*;
 use self::keystore::*;
 use self::sol_subscriber::*;
@@ -19,6 +20,7 @@ use crate::config::*;
 use crate::utils::*;
 
 mod bridge;
+mod btc_subscriber;
 mod eth_subscriber;
 mod keystore;
 mod sol_subscriber;
@@ -147,6 +149,7 @@ pub struct EngineContext {
     pub ton_engine: Arc<ton_indexer::Engine>,
     pub eth_subscribers: Arc<EthSubscriberRegistry>,
     pub sol_subscriber: Option<Arc<SolSubscriber>>,
+    pub btc_subscriber: Option<Arc<BtcSubscriber>>,
 }
 
 impl Drop for EngineContext {

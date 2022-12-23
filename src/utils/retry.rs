@@ -125,6 +125,7 @@ pub fn calculate_times_from_max_delay(
 
 pub enum NetworkType {
     SOL,
+    BTC,
     EVM(u32),
 }
 
@@ -132,6 +133,7 @@ impl std::fmt::Debug for NetworkType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             NetworkType::SOL => write!(f, "SOL"),
+            NetworkType::BTC => write!(f, "BTC"),
             NetworkType::EVM(chain_id) => write!(f, "EVM-{chain_id}"),
         }
     }
