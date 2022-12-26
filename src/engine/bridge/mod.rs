@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bitcoin::hash_types::Txid;
 use bitcoin::hashes::{sha256d, Hash};
 use borsh::BorshDeserialize;
 use eth_ton_abi_converter::{
@@ -1644,17 +1645,15 @@ impl Bridge {
 
         let (btc_receiver, ever_receiver, amount) = match data {
             // Decode event data with event abi from configuration
-            Some((btc_receiver, ever_receiver, amount)) => {
-                ((
-                    btc_receiver,
-                    MsgAddressInt::AddrStd(ton_block::MsgAddrStd::with_address(
-                        None,
-                        0,
-                        ever_receiver.into(),
-                    )),
-                    amount,
-                ))
-            }
+            Some((btc_receiver, ever_receiver, amount)) => (
+                btc_receiver,
+                MsgAddressInt::AddrStd(ton_block::MsgAddrStd::with_address(
+                    None,
+                    0,
+                    ever_receiver.into(),
+                )),
+                amount,
+            ),
             // Do nothing when configuration was not found
             None => {
                 tracing::error!(
@@ -1668,11 +1667,11 @@ impl Bridge {
         };
 
         let block_height = event_init_data.vote_data.block_height;
-        let tx_id_hash = sha256d::Hash::from_slice(&event_init_data.vote_data.tx_id.as_array())
+        let tx_id_hash = sha256d::Hash::from_slice(&*event_init_data.vote_data.tx_id.as_array())
             .context("can not parse tx id")?;
-        let tx_id = bitcoin::hash_types::Txid(tx_id_hash);
+        let tx_id = Txid::from_hash(tx_id_hash);
         let btc_receiver_pk =
-            bitcoin::PublicKey::from_slice(&event_init_data.vote_data.btc_receiver.as_array())
+            bitcoin::PublicKey::from_slice(&*event_init_data.vote_data.btc_receiver.as_array())
                 .context("can not parse btc_receiver")?;
         let btc_receiver = bitcoin::Script::new_p2pk(&btc_receiver_pk);
 
@@ -1797,139 +1796,56 @@ impl Bridge {
             }
         };
 
-        let btc_receiver_pk =
-            bitcoin::PublicKey::from_slice(&receiver.as_array())
-                .context("can not parse btc_receiver")?;
+        let btc_receiver_pk = bitcoin::PublicKey::from_slice(&*receiver.as_array())
+            .context("can not parse btc_receiver")?;
         let btc_receiver = bitcoin::Script::new_p2pk(&btc_receiver_pk);
 
-        let account_addr =  MsgAddressInt::AddrStd(ton_block::MsgAddrStd::with_address(None, 0, account.into()));
+        let account_addr =
+            MsgAddressInt::AddrStd(ton_block::MsgAddrStd::with_address(None, 0, account.into()));
 
-        let (sol_message_vote, sol_message_execute, ton_message) = match btc_subscriber
-            .verify_ton_btc_event(account_addr, btc_receiver, amount)
+        let ton_message = match btc_subscriber
+            .verify_ton_btc_event(account_addr.clone(), btc_receiver, amount)
             .await
         {
             // Confirm event if transaction was found
             Ok(VerificationStatus::Exists) => {
-                let vote_ix = solana_bridge::instructions::vote_for_proposal_ix(
-                    program_id,
-                    instruction,
-                    &voter_pubkey,
-                    &proposal_pubkey,
-                    round_number,
-                    solana_bridge::bridge_types::Vote::Confirm,
-                );
-
-                let sol_message_vote =
-                    solana_sdk::message::Message::new(&[vote_ix], Some(&voter_pubkey));
-
-                let mut sol_message_execute = None;
-                if execute_needed {
-                    let accounts = event_init_data
-                        .vote_data
-                        .execute_accounts
-                        .into_iter()
-                        .map(|account| {
-                            (
-                                Pubkey::new_from_array(account.account.inner()),
-                                account.read_only,
-                                account.is_signer,
-                            )
-                        })
-                        .collect();
-
-                    let execute_ix = solana_bridge::instructions::execute_proposal_ix(
-                        program_id,
-                        execute_instruction,
-                        proposal_pubkey,
-                        accounts,
-                    );
-
-                    sol_message_execute = Some(solana_sdk::message::Message::new(
-                        &[execute_ix],
-                        Some(&voter_pubkey),
-                    ));
-                }
-
                 let ton_message = UnsignedMessage::new(ton_sol_event_contract::confirm(), account)
                     .arg(account_addr);
-
-                (sol_message_vote, sol_message_execute, ton_message)
+                ton_message
             }
             Ok(VerificationStatus::NotExists) => {
-                let ix = solana_bridge::instructions::vote_for_proposal_ix(
-                    program_id,
-                    instruction,
-                    &voter_pubkey,
-                    &proposal_pubkey,
-                    round_number,
-                    solana_bridge::bridge_types::Vote::Reject,
-                );
-                let sol_message = solana_sdk::message::Message::new(&[ix], Some(&voter_pubkey));
-
                 let ton_message = UnsignedMessage::new(ton_sol_event_contract::reject(), account)
                     .arg(account_addr);
-
-                (sol_message, None, ton_message)
+                ton_message
             }
             // Skip event otherwise
             Err(e) => {
                 tracing::error!(
                     event = %DisplayAddr(account),
-                    "failed to verify TON->SOL event: {e:?}",
+                    "failed to verify TON->BTC event: {e:?}",
                 );
-                self.ton_sol_events_state.remove(&account);
+                self.ton_btc_events_state.remove(&account);
                 return Ok(());
             }
         };
 
-        if !sol_subscriber
-            .is_already_voted(round_number, &proposal_pubkey, &voter_pubkey)
-            .await?
-        {
-            // Extract vote and log it
-            let c_ix = sol_message_vote.instructions.first().trust_me();
-            let ix = solana_bridge::instructions::VoteForProposal::try_from_slice(&c_ix.data)?;
-
-            tracing::info!(
-                vote = ?ix.vote,
-                %proposal_pubkey,
-                "sending a vote for Solana proposal",
-            );
-
-            // Send confirm/reject to Solana
-            sol_subscriber
-                .send_message(sol_message_vote, &self.context.keystore)
-                .await
-                .map_err(parse_client_error)?;
-
-            // Execute proposal
-            if let Some(message) = sol_message_execute {
-                if let Err(e) = sol_subscriber
-                    .send_message(message, &self.context.keystore)
-                    .await
-                    .map_err(parse_client_error)
-                {
-                    tracing::error!(
-                        %proposal_pubkey,
-                        "failed to execute solana proposal: {e:?}",
-                    );
-                }
-            }
+        if !btc_subscriber.is_already_voted(round_number).await? {
+            // TODO: Check for anything to do here?
         }
 
         // Clone events observer and deliver message to the contract
-        let ton_sol_event_observer = match self.ton_sol_events_state.pending.get(&account) {
+        let ton_btc_event_observer = match self.ton_btc_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
         };
-        let ton_sol_events_state = Arc::downgrade(&self.ton_sol_events_state);
+        let ton_btc_events_state = Arc::downgrade(&self.ton_btc_events_state);
 
         self.context
             .deliver_message(
-                ton_sol_event_observer,
+                ton_btc_event_observer,
                 ton_message,
                 // Stop voting for the contract if it was removed
-                move || match ton_sol_events_state.upgrade() {
+                move || match ton_btc_events_state.upgrade() {
                     Some(state) => state.pending.contains_key(&account),
                     None => false,
                 },
@@ -2966,6 +2882,24 @@ impl EventExt for TonSolEvent {
     }
 }
 
+#[async_trait::async_trait]
+impl EventExt for BtcTonEvent {
+    const REQUIRE_ALL_SIGNATURES: bool = false;
+
+    async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
+        bridge.update_btc_ton_event(account).await
+    }
+}
+
+#[async_trait::async_trait]
+impl EventExt for TonBtcEvent {
+    const REQUIRE_ALL_SIGNATURES: bool = true;
+
+    async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
+        bridge.update_ton_btc_event(account).await
+    }
+}
+
 /// Semi-persistent bridge contracts collection
 #[derive(Default)]
 struct BridgeState {
@@ -3469,7 +3403,7 @@ enum BtcTonEventConfigurationEvent {
     SetEndTimestamp { end_timestamp: u64 },
 }
 
-impl ReadFromTransaction for SolTonEventConfigurationEvent {
+impl ReadFromTransaction for BtcTonEventConfigurationEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         let in_msg_body = ctx.in_msg_internal()?.body()?;
 
