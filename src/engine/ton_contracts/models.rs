@@ -114,7 +114,9 @@ pub struct BtcTonEventVoteData {
     #[abi(uint32)]
     pub block_height: u32,
     #[abi(with = "address_only_hash")]
-    pub receiver: UInt256,
+    pub ever_receiver: UInt256,
+    #[abi(uint256)]
+    pub btc_receiver: UInt256,
     #[abi(uint64)]
     pub amount: u64,
     #[abi(uint256)]

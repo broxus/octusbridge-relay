@@ -204,6 +204,18 @@ impl EngineContext {
             }
         };
 
+        let btc_subscriber = match settings.btc_network.clone() {
+            Some(config) => Some(
+                BtcSubscriber::new(config)
+                    .await
+                    .context("Failed to create BTC subscriber")?,
+            ),
+            None => {
+                tracing::warn!("btc subscriber is disabled");
+                None
+            }
+        };
+
         Ok(Arc::new(Self {
             shutdown_requests_tx,
             staker_account_str,
@@ -215,6 +227,7 @@ impl EngineContext {
             ton_engine,
             eth_subscribers,
             sol_subscriber,
+            btc_subscriber,
         }))
     }
 
