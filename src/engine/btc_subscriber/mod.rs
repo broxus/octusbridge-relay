@@ -218,7 +218,11 @@ impl BtcSubscriber {
             )
             .await
             .map_err(|e| {
-                anyhow::format_err!("Can not get transaction {} from rpc - {}", tx_id.to_string(), e.to_string())
+                anyhow::format_err!(
+                    "Can not get transaction {} from rpc - {}",
+                    tx_id.to_string(),
+                    e.to_string()
+                )
             })?
         }
         .ok_or(anyhow::format_err!(
@@ -310,5 +314,4 @@ pub struct BtcSubscriberMetrics {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum BtcSubscriberError {
-}
+enum BtcSubscriberError {}
