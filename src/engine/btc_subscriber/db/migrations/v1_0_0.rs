@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::Migrations;
-use crate::utils::*;
 
 // 1.0.0
 pub(super) fn register(migrations: &mut Migrations) -> Result<()> {

@@ -88,6 +88,10 @@ nekoton-utils = { git = "https://github.com/broxus/nekoton.git", features = ["en
 # Indexer engine
 ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 
+rocksdb-builder = { git = "https://github.com/broxus/rocksdb-builder.git" }
+rocksdb = { version = "0.19", features = ["multi-threaded-cf", "zstd", "lz4", "jemalloc"], default-features = false }
+num_cpus = { version = "1.8.0" }
+
 [dev-dependencies]
 cargo-husky = { version = "1", features = ["default", "run-cargo-fmt", "run-cargo-check"] }
 pretty_assertions = "1.1.0"

@@ -5,13 +5,12 @@ use anyhow::{Context, Result};
 use rocksdb::perf::MemoryUsageStats;
 use rocksdb::DBCompressionType;
 
-use self::tree::*;
 use self::utxo_balance::UtxoBalancesStorage;
-use crate::utils::*;
+
+use rocksdb_builder::DbCaches;
 
 mod columns;
 mod migrations;
-mod tree;
 mod utxo_balance;
 
 pub struct Db {
@@ -43,7 +42,7 @@ impl Db {
 
         let caches = DbCaches::with_capacity(mem_limit)?;
 
-        let db = DbBuilder::new(rocksdb_path, &caches)
+        let db = rocksdb_builder::DbBuilder::new(rocksdb_path, &caches)
             .options(|opts, _| {
                 opts.set_level_compaction_dynamic_level_bytes(true);
 
@@ -95,39 +94,8 @@ impl Db {
     }
 
     #[inline(always)]
-    pub fn runtime_storage(&self) -> &RuntimeStorage {
-        self.runtime_storage.as_ref()
-    }
-
-    #[inline(always)]
-    pub fn block_handle_storage(&self) -> &BlockHandleStorage {
-        self.block_handle_storage.as_ref()
-    }
-
-    #[inline(always)]
-    pub fn block_connection_storage(&self) -> &BlockConnectionStorage {
-        &self.block_connection_storage
-    }
-
-    #[inline(always)]
-    pub fn block_storage(&self) -> &BlockStorage {
-        self.block_storage.as_ref()
-    }
-
-    #[inline(always)]
-    pub fn shard_state_storage(&self) -> &ShardStateStorage {
-        &self.shard_state_storage
-    }
-
-    #[inline(always)]
-    pub fn node_state(&self) -> &NodeStateStorage {
-        &self.node_state_storage
-    }
-
-    pub fn metrics(&self) -> DbMetrics {
-        DbMetrics {
-            shard_state_storage: self.shard_state_storage.metrics(),
-        }
+    pub fn utxo_balance_storage(&self) -> &UtxoBalancesStorage {
+        self.utxo_balance_storage.as_ref()
     }
 
     pub fn get_memory_usage_stats(&self) -> Result<RocksdbStats> {
@@ -153,9 +121,4 @@ impl Db {
             compressed_block_cache_pined_usage,
         })
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct DbMetrics {
-    pub shard_state_storage: ShardStateStorageMetrics,
 }
