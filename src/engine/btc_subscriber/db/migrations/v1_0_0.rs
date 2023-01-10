@@ -7,7 +7,7 @@ use crate::utils::*;
 
 // 1.0.0
 pub(super) fn register(migrations: &mut Migrations) -> Result<()> {
-    migrations.register([0,0,0],[1, 0, 0], |db| async move {
+    migrations.register([0, 0, 0], [1, 0, 0], |db| async move {
         new_utxos_columns(&db)?;
         Ok(())
     })

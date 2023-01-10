@@ -5,14 +5,14 @@ use anyhow::{Context, Result};
 use rocksdb::perf::MemoryUsageStats;
 use rocksdb::DBCompressionType;
 
-use crate::utils::*;
 use self::tree::*;
 use self::utxo_balance::UtxoBalancesStorage;
+use crate::utils::*;
 
-mod utxo_balance;
 mod columns;
 mod migrations;
 mod tree;
+mod utxo_balance;
 
 pub struct Db {
     file_db_path: PathBuf,
