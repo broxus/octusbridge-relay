@@ -15,7 +15,7 @@ use crate::config::*;
 use crate::engine::bridge::*;
 use crate::utils::*;
 
-// pub mod db;
+pub mod db;
 
 pub struct BtcSubscriber {
     config: BtcConfig,

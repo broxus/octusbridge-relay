@@ -1,4 +1,4 @@
-use super::Column;
+use rocksdb_builder::Column;
 
 /// Maps UTXOs to amount
 /// - Key: `bitcoin::hash_types::Txid`

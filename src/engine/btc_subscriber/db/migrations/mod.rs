@@ -7,7 +7,7 @@ use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
 
 use super::columns;
-use super::tree::Tree;
+use rocksdb_builder::Tree;
 
 mod v1_0_0;
 
