@@ -2,7 +2,7 @@ use rocksdb::{BlockBasedOptions, Options};
 use rocksdb_builder::{Column, DbCaches};
 
 /// Maps UTXOs to amount
-/// - Key: `bitcoin::hash_types::Txid`
+/// - Key: `bitcoin::Script`
 /// - Value: `u64`
 pub struct UtxoBalances;
 impl Column for UtxoBalances {

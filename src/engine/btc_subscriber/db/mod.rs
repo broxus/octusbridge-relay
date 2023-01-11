@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -32,7 +32,7 @@ impl Db {
     where
         PS: AsRef<Path>,
     {
-        let limit = 256; // TODO: CHECK LIMIT
+        let max_open_files_limit = 256; // TODO: CHECK LIMIT
 
         let caches = DbCaches::with_capacity(mem_limit)?;
 
@@ -45,7 +45,7 @@ impl Db {
                 opts.set_compression_type(DBCompressionType::Zstd);
 
                 // io
-                opts.set_max_open_files(limit as i32);
+                opts.set_max_open_files(max_open_files_limit as i32);
 
                 // logging
                 opts.set_log_level(rocksdb::LogLevel::Error);

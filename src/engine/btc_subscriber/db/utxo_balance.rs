@@ -1,35 +1,33 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use bitcoin::hashes::{sha256d, Hash};
 use rocksdb_builder::Tree;
-use tokio::sync::Mutex;
 use tracing::log;
 
 use super::columns;
 
 pub struct UtxoBalancesStorage {
-    cache: Arc<Mutex<HashMap<bitcoin::hash_types::Txid, u64>>>,
     balances: Tree<columns::UtxoBalances>,
 }
 
 impl UtxoBalancesStorage {
     pub fn with_db(db: &Arc<rocksdb::DB>) -> Result<Self> {
         Ok(Self {
-            cache: Arc::new(Mutex::new(Default::default())),
             balances: Tree::new(db)?,
         })
     }
 
-    pub async fn store_balance(&self, id: bitcoin::hash_types::Txid, balance: u64) -> Result<()> {
-        let mut hash = self.cache.lock().await;
-        hash.insert(id, balance);
+    pub async fn store_balance(&self, id: bitcoin::Script, balance: u64) -> Result<()> {
         self.balances.insert(id, balance.to_le_bytes())?;
         Ok(())
     }
 
-    pub fn balances_iterator(&self) -> impl Iterator<Item = (bitcoin::hash_types::Txid, u64)> + '_ {
+    pub async fn remove_balance(&self, id: bitcoin::Script) -> Result<()> {
+        self.balances.remove(id)?;
+        Ok(())
+    }
+
+    pub fn balances_iterator(&self) -> impl Iterator<Item = (bitcoin::Script, u64)> + '_ {
         let raw_iterator = self.balances.raw_iterator();
 
         UtxoBalancesIterator { raw_iterator }
@@ -41,7 +39,7 @@ struct UtxoBalancesIterator<'a> {
 }
 
 impl Iterator for UtxoBalancesIterator<'_> {
-    type Item = (bitcoin::hash_types::Txid, u64);
+    type Item = (bitcoin::Script, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
         let value = self.raw_iterator.item().map(|(k, v)| {
@@ -50,20 +48,21 @@ impl Iterator for UtxoBalancesIterator<'_> {
                 .context("can not parse balance")
                 .map(u64::from_le_bytes);
 
-            let tx_id = sha256d::Hash::from_slice(k)
-                .context("can not parse tx id")
-                .map(bitcoin::hash_types::Txid::from_hash);
-            (tx_id, balance)
+            let script = bitcoin::PublicKey::from_slice(k)
+                .context("can not parse script")
+                .map(|pk| bitcoin::Script::new_p2pk(&pk));
+
+            (script, balance)
         })?;
         self.raw_iterator.next();
 
         match value {
-            (Ok(tx), Ok(balance)) => Some((tx, balance)),
+            (Ok(script), Ok(balance)) => Some((script, balance)),
             t => {
                 log::error!(
-                    "Can not parse UTXO balance from raw iterator - {:#?}, from tx id - {:?}",
+                    "Can not parse UTXO balance from raw iterator - {:#?}, from script - {:?}",
                     t.1,
-                    1.0
+                    t.0
                 );
                 None
             }

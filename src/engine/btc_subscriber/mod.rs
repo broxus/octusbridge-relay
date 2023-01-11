@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bitcoin::hash_types::Txid;
 use bitcoin::{Script, TxOut};
 use esplora_client::Builder;
@@ -13,16 +13,19 @@ use ton_block::MsgAddressInt;
 
 use crate::config::*;
 use crate::engine::bridge::*;
+use crate::engine::btc_subscriber::db::Db;
 use crate::utils::*;
 
 pub mod db;
 
 pub struct BtcSubscriber {
     config: BtcConfig,
+    db: Arc<Db>,
     rpc_client: Arc<esplora_client::AsyncClient>,
     pool: Arc<Semaphore>,
     pending_events: tokio::sync::Mutex<FxHashMap<MsgAddressInt, TonBtcPendingEvent>>,
     sent_transactions: tokio::sync::Mutex<FxHashMap<Txid, Vec<MsgAddressInt>>>,
+    utxo_balances: tokio::sync::Mutex<FxHashMap<Script, u64>>,
     pending_events_count: AtomicUsize,
     unrecognized_proposals_count: AtomicUsize,
 }
@@ -34,13 +37,27 @@ impl BtcSubscriber {
 
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
+        let db = Db::new(&config.rocks_db_path, config.max_db_memory_usage)
+            .await
+            .context("Failed to create DB")?;
+
+        // TODO: check correctness of read all UTXO balances from db
+        let utxo_storage = db.utxo_balance_storage();
+        let mut hash: FxHashMap<Script, u64> = Default::default();
+        for (script, balance) in utxo_storage.balances_iterator() {
+            hash.insert(script, balance);
+        }
+        let utxo_balances = tokio::sync::Mutex::new(hash);
+
         let subscriber = Arc::new(Self {
             config,
+            db,
             rpc_client,
             pool,
             pending_events: Default::default(),
             pending_events_count: Default::default(),
             sent_transactions: Default::default(),
+            utxo_balances,
             unrecognized_proposals_count: Default::default(),
         });
 
@@ -117,10 +134,19 @@ impl BtcSubscriber {
         transaction_data: BtcTonTransactionData,
         account_data: BtcTonAccountData,
     ) -> Result<VerificationStatus> {
-        if let VerificationStatus::NotExists =
-            self.verify_btc_ton_transaction(transaction_data).await?
+        match self
+            .verify_btc_ton_transaction(transaction_data.clone())
+            .await?
         {
-            return Ok(VerificationStatus::NotExists);
+            VerificationStatus::NotExists => {
+                return Ok(VerificationStatus::NotExists);
+            }
+            VerificationStatus::Exists => {
+                self.db
+                    .utxo_balance_storage()
+                    .store_balance(transaction_data.btc_receiver, transaction_data.amount)
+                    .await?;
+            }
         }
 
         self.verify_btc_ton_account(account_data).await
@@ -301,6 +327,7 @@ pub struct BtcTonAccountData {
     pub amount: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct BtcTonTransactionData {
     pub tx_id: Txid,
     pub block_height: u32,
