@@ -19,7 +19,7 @@ pub async fn apply(db: &Arc<rocksdb::DB>) -> Result<()> {
     let mut migrations = Migrations::default();
     v1_0_0::register(&mut migrations).context("Failed to register v1.0.0")?;
 
-    let state = Tree::<columns::UtxoBalance>::new(db)?;
+    let state = Tree::<columns::UtxoBalances>::new(db)?;
     let is_empty = state
         .iterator(rocksdb::IteratorMode::Start)
         .next()

@@ -11,7 +11,7 @@ use super::columns;
 
 pub struct UtxoBalancesStorage {
     cache: Arc<Mutex<HashMap<bitcoin::hash_types::Txid, u64>>>,
-    balances: Tree<columns::UtxoBalance>,
+    balances: Tree<columns::UtxoBalances>,
 }
 
 impl UtxoBalancesStorage {

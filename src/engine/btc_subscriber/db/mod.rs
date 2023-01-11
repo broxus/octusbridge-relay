@@ -14,7 +14,6 @@ mod migrations;
 mod utxo_balance;
 
 pub struct Db {
-    file_db_path: PathBuf,
     utxo_balance_storage: Arc<UtxoBalancesStorage>,
     db: Arc<rocksdb::DB>,
     caches: DbCaches,
@@ -29,14 +28,9 @@ pub struct RocksdbStats {
 }
 
 impl Db {
-    pub async fn new<PS, PF>(
-        rocksdb_path: PS,
-        file_db_path: PF,
-        mem_limit: usize,
-    ) -> Result<Arc<Self>>
+    pub async fn new<PS>(rocksdb_path: PS, mem_limit: usize) -> Result<Arc<Self>>
     where
         PS: AsRef<Path>,
-        PF: AsRef<Path>,
     {
         let limit = 256; // TODO: CHECK LIMIT
 
@@ -70,7 +64,7 @@ impl Db {
                 // opts.enable_statistics();
                 // opts.set_stats_dump_period_sec(30);
             })
-            .column::<columns::UtxoBalance>()
+            .column::<columns::UtxoBalances>()
             .build()
             .context("Failed building db")?;
 
@@ -81,16 +75,10 @@ impl Db {
         let utxo_balance_storage = Arc::new(UtxoBalancesStorage::with_db(&db)?);
 
         Ok(Arc::new(Self {
-            file_db_path: file_db_path.as_ref().to_path_buf(),
             utxo_balance_storage,
             db,
             caches,
         }))
-    }
-
-    #[inline(always)]
-    pub fn file_db_path(&self) -> &Path {
-        &self.file_db_path
     }
 
     #[inline(always)]
