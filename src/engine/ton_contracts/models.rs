@@ -105,22 +105,24 @@ pub struct BtcTonEventInitData {
     pub configuration: UInt256,
     #[abi(with = "address_only_hash")]
     pub staking: UInt256,
+    #[abi(uint32)]
+    pub chain_id: u32,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct BtcTonEventVoteData {
     #[abi(uint256)]
-    pub tx_id: UInt256,
+    pub account_id: UInt256,
+    #[abi(uint128)]
+    pub amount: u128,
+    #[abi(uint256)]
+    pub transaction: UInt256,
     #[abi(uint32)]
-    pub block_height: u32,
-    #[abi(with = "address_only_hash")]
-    pub ever_receiver: UInt256,
+    pub output_index: u32,
+    #[abi(uint32)]
+    pub block_number: u32,
     #[abi(uint256)]
-    pub btc_receiver: UInt256,
-    #[abi(uint64)]
-    pub amount: u64,
-    #[abi(uint256)]
-    pub sender: UInt256,
+    pub event_block: UInt256,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -210,7 +212,7 @@ pub struct TonSolEventConfigurationDetails {
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
 pub struct BtcTonEventConfigurationDetails {
     #[abi]
-    pub basic_configuration: BasicConfiguration,
+    pub basic_configuration: BtcBasicConfiguration,
     #[abi]
     pub network_configuration: BtcTonEventConfiguration,
     #[abi(cell)]
@@ -237,6 +239,18 @@ pub struct BasicConfiguration {
     pub event_initial_balance: u64,
     #[abi(cell)]
     pub event_code: ton_types::Cell,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct BtcBasicConfiguration {
+    #[abi(with = "address_only_hash")]
+    pub staking: UInt256,
+    #[abi(uint64)]
+    pub event_initial_balance: u64,
+    #[abi(cell)]
+    pub event_code: ton_types::Cell,
+    #[abi(cell)]
+    pub account_code: ton_types::Cell,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -269,12 +283,16 @@ pub struct TonEthEventConfiguration {
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct BtcTonEventConfiguration {
+    #[abi(uint32)]
+    pub chain_id: u32,
+    #[abi(uint16)]
+    pub event_blocks_to_confirm: u16,
     #[abi(with = "address_only_hash")]
     pub proxy: UInt256,
-    #[abi(uint64)]
-    pub start_timestamp: u64,
-    #[abi(uint64)]
-    pub end_timestamp: u64,
+    #[abi(uint32)]
+    pub start_block_number: u32,
+    #[abi(uint32)]
+    pub end_block_number: u32,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -325,6 +343,7 @@ pub enum EventType {
     TonEth = 1,
     SolTon = 2,
     TonSol = 3,
+    BtcTon = 4,
 }
 
 impl std::fmt::Display for EventType {
@@ -334,6 +353,7 @@ impl std::fmt::Display for EventType {
             Self::TonEth => f.write_str("TON->ETH"),
             Self::SolTon => f.write_str("SOL->TON"),
             Self::TonSol => f.write_str("TON->SOL"),
+            Self::BtcTon => f.write_str("BTC->TON"),
         }
     }
 }
