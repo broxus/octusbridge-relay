@@ -45,7 +45,7 @@ impl Db {
                 opts.set_compression_type(DBCompressionType::Zstd);
 
                 // io
-                opts.set_max_open_files(max_open_files_limit as i32);
+                opts.set_max_open_files(max_open_files_limit);
 
                 // logging
                 opts.set_log_level(rocksdb::LogLevel::Error);

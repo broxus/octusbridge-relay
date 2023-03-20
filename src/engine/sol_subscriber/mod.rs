@@ -528,7 +528,7 @@ impl SolSubscriber {
 
         for ix in instructions {
             if account_keys[ix.program_id_index as usize] == data.program_id {
-                let deposit_seed = u128::from_le_bytes(ix.data[1..17].try_into()?);
+                let deposit_seed = u128::from_le_bytes(ix.data[1..17].try_into()?); // deposit seed data offset - 1..17
                 if deposit_seed == data.seed {
                     return Ok(VerificationStatus::Exists);
                 }

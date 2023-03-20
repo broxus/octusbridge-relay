@@ -217,6 +217,19 @@ impl TonSolEventConfigurationContract<'_> {
     }
 }
 
+pub struct BtcTonEventConfigurationContract<'a>(pub &'a ExistingContract);
+
+impl BtcTonEventConfigurationContract<'_> {
+    pub fn get_details(&self) -> Result<BtcTonEventConfigurationDetails> {
+        let function = btc_ton_event_configuration_contract::get_details();
+        let details = self
+            .0
+            .run_local_responsible(function, &[answer_id()])?
+            .unpack()?;
+        Ok(details)
+    }
+}
+
 pub struct BridgeContract<'a>(pub &'a ExistingContract);
 
 impl BridgeContract<'_> {
