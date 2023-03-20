@@ -3846,7 +3846,7 @@ dependencies = [
 [[package]]
 name = "rocksdb-builder"
 version = "0.1.0"
-source = "git+https://github.com/broxus/rocksdb-builder.git#270b965e9f1555b91bcab4b9e591e7cdd6b0b4e5"
+source = "git+https://github.com/broxus/rocksdb-builder.git#724912e5f8674b3a53dc69f8e4d443b3f80c4785"
 dependencies = [
  "anyhow",
  "rocksdb",
