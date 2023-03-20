@@ -29,7 +29,6 @@ impl UtxoBalancesStorage {
 
     pub fn balances_iterator(&self) -> impl Iterator<Item = (bitcoin::Script, u64)> + '_ {
         let raw_iterator = self.balances.raw_iterator();
-
         UtxoBalancesIterator { raw_iterator }
     }
 }

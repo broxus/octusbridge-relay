@@ -3,20 +3,18 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rocksdb::perf::MemoryUsageStats;
-use rocksdb::DBCompressionType;
+use rocksdb_builder::DbCaches;
 
 use self::utxo_balance::UtxoBalancesStorage;
-
-use rocksdb_builder::DbCaches;
 
 mod columns;
 mod migrations;
 mod utxo_balance;
 
 pub struct Db {
-    utxo_balance_storage: Arc<UtxoBalancesStorage>,
     db: Arc<rocksdb::DB>,
     caches: DbCaches,
+    utxo_balance_storage: Arc<UtxoBalancesStorage>,
 }
 
 pub struct RocksdbStats {
@@ -32,20 +30,11 @@ impl Db {
     where
         PS: AsRef<Path>,
     {
-        let max_open_files_limit = 256; // TODO: CHECK LIMIT
-
         let caches = DbCaches::with_capacity(mem_limit)?;
 
         let db = rocksdb_builder::DbBuilder::new(rocksdb_path, &caches)
             .options(|opts, _| {
                 opts.set_level_compaction_dynamic_level_bytes(true);
-
-                // compression opts
-                opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
-                opts.set_compression_type(DBCompressionType::Zstd);
-
-                // io
-                opts.set_max_open_files(max_open_files_limit);
 
                 // logging
                 opts.set_log_level(rocksdb::LogLevel::Error);
@@ -75,9 +64,9 @@ impl Db {
         let utxo_balance_storage = Arc::new(UtxoBalancesStorage::with_db(&db)?);
 
         Ok(Arc::new(Self {
-            utxo_balance_storage,
             db,
             caches,
+            utxo_balance_storage,
         }))
     }
 
@@ -86,6 +75,7 @@ impl Db {
         self.utxo_balance_storage.as_ref()
     }
 
+    #[allow(unused)]
     pub fn get_memory_usage_stats(&self) -> Result<RocksdbStats> {
         let caches = &[
             &self.caches.block_cache,

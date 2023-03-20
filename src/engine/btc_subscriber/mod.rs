@@ -24,11 +24,9 @@ pub mod db;
 
 pub struct BtcSubscriber {
     config: BtcConfig,
-    _db: Arc<Db>,
+    db: Arc<Db>,
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
-    _utxo_balances: tokio::sync::Mutex<FxHashMap<Script, u64>>,
-
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
     pending_event_count: AtomicUsize,
     new_events_notify: Notify,
@@ -45,22 +43,13 @@ impl BtcSubscriber {
             .await
             .context("Failed to create DB")?;
 
-        // TODO: check correctness of read all UTXO balances from db
-        let utxo_storage = db.utxo_balance_storage();
-        let mut hash: FxHashMap<Script, u64> = Default::default();
-        for (script, balance) in utxo_storage.balances_iterator() {
-            hash.insert(script, balance);
-        }
-        let utxo_balances = tokio::sync::Mutex::new(hash);
-
         let subscriber = Arc::new(Self {
             config,
-            _db: db,
-            rpc_client,
+            db,
             pool,
+            rpc_client,
             pending_events: Default::default(),
             pending_event_count: Default::default(),
-            _utxo_balances: utxo_balances,
             new_events_notify: Notify::new(),
         });
 
@@ -322,8 +311,8 @@ impl BtcSubscriber {
             let event_data = BtcTonEventData {
                 tx_id,
                 block_hash,
-                btc_receiver,
                 amount: vote_data.amount,
+                btc_receiver: btc_receiver.clone(),
                 block_height: vote_data.block_number,
             };
 
@@ -345,6 +334,13 @@ impl BtcSubscriber {
         };
 
         let status = rx.await?;
+
+        if let VerificationStatus::Exists = status {
+            self.db
+                .utxo_balance_storage()
+                .store_balance(btc_receiver, vote_data.amount as u64)
+                .await?;
+        }
 
         Ok(status)
     }
