@@ -191,8 +191,8 @@ impl BtcSubscriber {
                 NetworkType::BTC,
                 "get btc height",
             )
-                .await
-                .map_err(|e| anyhow::format_err!("Can not get height from rpc - {}", e.to_string()))?
+            .await
+            .map_err(|e| anyhow::format_err!("Can not get height from rpc - {}", e.to_string()))?
         };
 
         Ok(height)
@@ -208,14 +208,14 @@ impl BtcSubscriber {
                 NetworkType::BTC,
                 "get btc transaction",
             )
-                .await
-                .map_err(|e| {
-                    anyhow::format_err!(
+            .await
+            .map_err(|e| {
+                anyhow::format_err!(
                     "Can not get transaction {} from rpc - {}",
                     tx_id.to_string(),
                     e.to_string()
                 )
-                })?
+            })?
         };
 
         Ok(transaction)
@@ -234,14 +234,14 @@ impl BtcSubscriber {
                 NetworkType::BTC,
                 "get btc transaction status",
             )
-                .await
-                .map_err(|e| {
-                    anyhow::format_err!(
+            .await
+            .map_err(|e| {
+                anyhow::format_err!(
                     "Can not get transaction status {} from rpc - {}",
                     tx_id.to_string(),
                     e.to_string()
                 )
-                })?
+            })?
         };
 
         Ok(status)
@@ -305,8 +305,9 @@ impl BtcSubscriber {
     pub async fn verify(
         &self,
         account: UInt256,
-        vote_data: BtcTonEventVoteData,
+        btc_receiver: Script,
         blocks_to_confirm: u16,
+        vote_data: BtcTonEventVoteData,
     ) -> Result<VerificationStatus> {
         let rx = {
             let mut pending_events = self.pending_events.lock().await;
@@ -315,9 +316,6 @@ impl BtcSubscriber {
 
             let block_hash = BlockHash::from_slice(vote_data.event_block.as_array())?;
             let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
-
-            // TODO: derive address ???
-            let btc_receiver = Script::new();
 
             let target_block = vote_data.block_number + blocks_to_confirm as u32;
 

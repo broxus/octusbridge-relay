@@ -1,4 +1,5 @@
 use nekoton_abi::*;
+use ton_block::MsgAddressInt;
 use ton_types::UInt256;
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -111,8 +112,8 @@ pub struct BtcTonEventInitData {
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct BtcTonEventVoteData {
-    #[abi(uint256)]
-    pub account_id: UInt256,
+    #[abi(address)]
+    pub beneficiary: MsgAddressInt,
     #[abi(uint128)]
     pub amount: u128,
     #[abi(uint256)]
