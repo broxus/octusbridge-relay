@@ -1,5 +1,6 @@
 use anyhow::Result;
 use nekoton_abi::*;
+use ton_block::MsgAddressInt;
 use ton_types::UInt256;
 
 pub use self::models::*;
@@ -8,6 +9,8 @@ use crate::utils::*;
 pub mod base_event_configuration_contract;
 pub mod base_event_contract;
 pub mod bridge_contract;
+pub mod btc_deposit_contract;
+pub mod btc_proxy_contract;
 pub mod btc_ton_event_configuration_contract;
 pub mod btc_ton_event_contract;
 pub mod connector_contract;
@@ -368,5 +371,29 @@ impl UserDataContract<'_> {
     pub fn get_details(&self) -> Result<UserDataDetails> {
         let function = user_data_contract::get_details();
         Ok(self.0.run_local(function, &[answer_id()])?.unpack_first()?)
+    }
+}
+
+pub struct BtcDepositContract<'a>(pub &'a ExistingContract);
+
+impl BtcDepositContract<'_> {
+    pub fn get_account_id(&self) -> Result<UInt256> {
+        let function = btc_deposit_contract::id();
+        let id = self.0.run_local(function, &[])?.unpack_first()?;
+
+        Ok(id)
+    }
+}
+
+pub struct BtcProxyContract<'a>(pub &'a ExistingContract);
+
+impl BtcProxyContract<'_> {
+    pub fn get_deposit_account(&self, beneficiary: &MsgAddressInt) -> Result<UInt256> {
+        let function = btc_proxy_contract::get_deposit_address();
+        let input = [answer_id(), beneficiary.token_value().named("beneficiary")];
+        let ton_block::MsgAddrStd { address, .. } =
+            self.0.run_local(function, &input)?.unpack_first()?;
+
+        Ok(UInt256::from_be_bytes(&address.get_bytestring(0)))
     }
 }

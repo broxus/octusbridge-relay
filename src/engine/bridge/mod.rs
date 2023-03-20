@@ -1529,17 +1529,20 @@ impl Bridge {
                 .btc_ton_event_configurations
                 .get(&event_init_data.configuration)
                 .map(|configuration| {
-                    configuration
-                        .details
-                        .network_configuration
-                        .event_blocks_to_confirm
+                    (
+                        configuration.details.network_configuration.proxy,
+                        configuration
+                            .details
+                            .network_configuration
+                            .event_blocks_to_confirm,
+                    )
                 })
         };
 
-        let blocks_to_confirm = match data {
+        let (proxy, blocks_to_confirm) = match data {
             // Decode event data with event abi from configuration
-            Some(blocks_to_confirm) =>
-                blocks_to_confirm
+            Some((proxy, blocks_to_confirm)) =>
+                (proxy, blocks_to_confirm)
             ,
             // Do nothing when configuration was not found
             None => {
@@ -1553,11 +1556,28 @@ impl Bridge {
             }
         };
 
+        // Get deposit account
+        let proxy_contract = ton_subscriber.wait_contract_state(proxy).await?;
+        let deposit = BtcProxyContract(&proxy_contract)
+            .get_deposit_account(&event_init_data.vote_data.beneficiary)?;
+
+        // Get deposit account id
+        let deposit_contract = ton_subscriber.wait_contract_state(deposit).await?;
+        let _deposit_account_id = BtcDepositContract(&deposit_contract).get_account_id()?;
+
+        // TODO: derive btc recipient using account_id
+        let btc_receiver = bitcoin::Script::new();
+
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
         // Verify BTC->TON event and create message to event contract
         let message = match btc_subscriber
-            .verify(account, event_init_data.vote_data, blocks_to_confirm)
+            .verify(
+                account,
+                btc_receiver,
+                blocks_to_confirm,
+                event_init_data.vote_data,
+            )
             .await
         {
             // Confirm event if transaction was found
