@@ -90,10 +90,10 @@ impl Engine {
 
     pub async fn start(self: &Arc<Self>) -> Result<()> {
         // Sync node and subscribers
-        self.context.start().await?;
+        // self.context.start().await?;
 
         // Fetch bridge configuration
-        let bridge_account = only_account_hash(&self.context.settings.bridge_address);
+        /*let bridge_account = only_account_hash(&self.context.settings.bridge_address);
 
         let bridge_contract = match self
             .context
@@ -119,11 +119,19 @@ impl Engine {
         let staking = Staking::new(self.context.clone(), bridge_details.staking)
             .await
             .context("Failed to init staking")?;
-        *self.staking.lock() = Some(staking);
+        *self.staking.lock() = Some(staking);*/
 
-        self.context.eth_subscribers.start();
+        // Start ETH subscribers
+        //self.context.eth_subscribers.start();
+
+        // Start Solana subscriber
         if let Some(sol_subscriber) = &self.context.sol_subscriber {
             sol_subscriber.start();
+        }
+
+        // Start BTC subscriber
+        if let Some(btc_subscriber) = &self.context.btc_subscriber {
+            btc_subscriber.start();
         }
 
         // Done

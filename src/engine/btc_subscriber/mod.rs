@@ -1,4 +1,5 @@
 use std::collections::hash_map;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +14,7 @@ use futures_util::StreamExt;
 use rustc_hash::FxHashMap;
 use tokio::sync::{oneshot, Notify, Semaphore};
 use ton_types::UInt256;
+use tracing::log;
 
 use crate::config::*;
 use crate::engine::bridge::*;
@@ -79,7 +81,75 @@ impl BtcSubscriber {
         });
     }
 
+    pub async fn verify(
+        &self,
+        account: UInt256,
+        btc_receiver: Script,
+        blocks_to_confirm: u16,
+        vote_data: BtcTonEventVoteData,
+    ) -> Result<VerificationStatus> {
+        let rx = {
+            let mut pending_events = self.pending_events.lock().await;
+
+            let (tx, rx) = oneshot::channel();
+
+            let block_hash = BlockHash::from_slice(vote_data.event_block.as_array())?;
+            let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
+
+            let target_block = vote_data.block_number + blocks_to_confirm as u32;
+
+            let event_data = BtcTonEventData {
+                tx_id,
+                block_hash,
+                amount: vote_data.amount,
+                btc_receiver: btc_receiver.clone(),
+                block_height: vote_data.block_number,
+            };
+
+            pending_events.insert(
+                account,
+                PendingEvent {
+                    event_data,
+                    target_block,
+                    status_tx: Some(tx),
+                },
+            );
+
+            self.pending_event_count
+                .store(pending_events.len(), Ordering::Release);
+
+            self.new_events_notify.notify_waiters();
+
+            rx
+        };
+
+        let status = rx.await?;
+
+        if let VerificationStatus::Exists = status {
+            self.db
+                .utxo_balance_storage()
+                .store_balance(btc_receiver, vote_data.amount as u64)
+                .await?;
+        }
+
+        Ok(status)
+    }
+
     async fn update(&self) -> Result<()> {
+        tracing::info!("Update");
+
+        let btc_receiver = Script::from_str("041175ca94f5094261321fe2161be351").unwrap();
+        self.db
+            .utxo_balance_storage()
+            .store_balance(btc_receiver.clone(), 1234567)
+            .await?;
+
+        tracing::info!("Iterator");
+        for (k, v) in self.db.utxo_balance_storage().balances_iterator() {
+            tracing::info!("KEY: {}", k);
+            tracing::info!("VALUE: {}", v);
+        }
+
         if self.pending_events.lock().await.is_empty() {
             // Wait until new events appeared or idle poll interval passed.
             // NOTE: Idle polling is needed there to prevent large intervals from occurring
@@ -267,82 +337,6 @@ impl BtcSubscriber {
             .get_tx_status(tx_id)
             .await
             .map_err(|err| anyhow::format_err!("Failed to get btc transaction status: {}", err))
-    }
-
-    /*async fn verify_btc_ton_transaction(
-        &self,
-        data: BtcTonTransactionData,
-    ) -> Result<VerificationStatus> {
-        let result = self.get_transaction(&data.tx_id).await?;
-
-        if !result.output.contains(&TxOut {
-            value: data.amount,
-            script_pubkey: data.btc_receiver,
-        }) {
-            return Ok(VerificationStatus::NotExists {
-                reason: "reason".to_string(),
-            });
-        }
-
-        // TODO: Verify unique btc receiver!
-
-        Ok(VerificationStatus::NotExists {
-            reason: "reason".to_string(),
-        })
-    }*/
-
-    pub async fn verify(
-        &self,
-        account: UInt256,
-        btc_receiver: Script,
-        blocks_to_confirm: u16,
-        vote_data: BtcTonEventVoteData,
-    ) -> Result<VerificationStatus> {
-        let rx = {
-            let mut pending_events = self.pending_events.lock().await;
-
-            let (tx, rx) = oneshot::channel();
-
-            let block_hash = BlockHash::from_slice(vote_data.event_block.as_array())?;
-            let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
-
-            let target_block = vote_data.block_number + blocks_to_confirm as u32;
-
-            let event_data = BtcTonEventData {
-                tx_id,
-                block_hash,
-                amount: vote_data.amount,
-                btc_receiver: btc_receiver.clone(),
-                block_height: vote_data.block_number,
-            };
-
-            pending_events.insert(
-                account,
-                PendingEvent {
-                    event_data,
-                    target_block,
-                    status_tx: Some(tx),
-                },
-            );
-
-            self.pending_event_count
-                .store(pending_events.len(), Ordering::Release);
-
-            self.new_events_notify.notify_waiters();
-
-            rx
-        };
-
-        let status = rx.await?;
-
-        if let VerificationStatus::Exists = status {
-            self.db
-                .utxo_balance_storage()
-                .store_balance(btc_receiver, vote_data.amount as u64)
-                .await?;
-        }
-
-        Ok(status)
     }
 }
 

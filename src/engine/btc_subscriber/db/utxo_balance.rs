@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rocksdb_builder::Tree;
-use tracing::log;
 
 use super::columns;
 
@@ -58,7 +57,7 @@ impl Iterator for UtxoBalancesIterator<'_> {
         match value {
             (Ok(script), Ok(balance)) => Some((script, balance)),
             t => {
-                log::error!(
+                tracing::error!(
                     "Can not parse UTXO balance from raw iterator - {:#?}, from script - {:?}",
                     t.1,
                     t.0

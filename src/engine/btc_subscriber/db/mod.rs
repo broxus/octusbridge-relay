@@ -37,9 +37,9 @@ impl Db {
                 opts.set_level_compaction_dynamic_level_bytes(true);
 
                 // logging
-                opts.set_log_level(rocksdb::LogLevel::Error);
-                opts.set_keep_log_file_num(2);
-                opts.set_recycle_log_file_num(2);
+                //opts.set_log_level(rocksdb::LogLevel::Error);
+                //opts.set_keep_log_file_num(2);
+                //opts.set_recycle_log_file_num(2);
 
                 // cf
                 opts.create_if_missing(true);
@@ -75,7 +75,7 @@ impl Db {
         self.utxo_balance_storage.as_ref()
     }
 
-    #[allow(unused)]
+    #[allow(dead_code)]
     pub fn get_memory_usage_stats(&self) -> Result<RocksdbStats> {
         let caches = &[
             &self.caches.block_cache,
