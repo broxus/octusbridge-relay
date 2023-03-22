@@ -6,7 +6,7 @@ use rocksdb_builder::{Column, DbCaches};
 /// - Value: `u64`
 pub struct UtxoBalances;
 impl Column for UtxoBalances {
-    const NAME: &'static str = "utxo_balances";
+    const NAME: &'static str = "utxo_balance";
 
     fn options(opts: &mut Options, caches: &DbCaches) {
         default_block_based_table_factory(opts, caches); // TODO: check options for column family

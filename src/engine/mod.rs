@@ -121,9 +121,17 @@ impl Engine {
             .context("Failed to init staking")?;
         *self.staking.lock() = Some(staking);
 
+        // Start ETH subscribers
         self.context.eth_subscribers.start();
+
+        // Start Solana subscriber
         if let Some(sol_subscriber) = &self.context.sol_subscriber {
             sol_subscriber.start();
+        }
+
+        // Start BTC subscriber
+        if let Some(btc_subscriber) = &self.context.btc_subscriber {
+            btc_subscriber.start();
         }
 
         // Done

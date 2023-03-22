@@ -75,7 +75,7 @@ impl Db {
         self.utxo_balance_storage.as_ref()
     }
 
-    #[allow(unused)]
+    #[allow(dead_code)]
     pub fn get_memory_usage_stats(&self) -> Result<RocksdbStats> {
         let caches = &[
             &self.caches.block_cache,

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rocksdb_builder::Tree;
-use tracing::log;
 
 use super::columns;
 
@@ -41,6 +40,8 @@ impl Iterator for UtxoBalancesIterator<'_> {
     type Item = (bitcoin::Script, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.raw_iterator.seek_to_first();
+
         let value = self.raw_iterator.item().map(|(k, v)| {
             let balance = v
                 .try_into()
@@ -58,7 +59,7 @@ impl Iterator for UtxoBalancesIterator<'_> {
         match value {
             (Ok(script), Ok(balance)) => Some((script, balance)),
             t => {
-                log::error!(
+                tracing::error!(
                     "Can not parse UTXO balance from raw iterator - {:#?}, from script - {:?}",
                     t.1,
                     t.0
