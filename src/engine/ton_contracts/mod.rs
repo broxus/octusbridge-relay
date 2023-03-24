@@ -377,7 +377,7 @@ impl UserDataContract<'_> {
 pub struct BtcDepositContract<'a>(pub &'a ExistingContract);
 
 impl BtcDepositContract<'_> {
-    pub fn get_account_id(&self) -> Result<UInt256> {
+    pub fn get_account_id(&self) -> Result<u32> {
         let function = btc_deposit_contract::id();
         let id = self.0.run_local(function, &[])?.unpack_first()?;
 

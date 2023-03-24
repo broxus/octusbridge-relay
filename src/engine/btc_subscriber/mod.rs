@@ -1,4 +1,5 @@
 use std::collections::hash_map;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,12 +22,14 @@ use crate::engine::ton_contracts::BtcTonEventVoteData;
 use crate::utils::*;
 
 pub mod db;
+pub mod tracker;
 
 pub struct BtcSubscriber {
     config: BtcConfig,
     db: Arc<Db>,
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
+    address_tracker: Arc<tracker::AddressTracker>,
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
     pending_event_count: AtomicUsize,
     new_events_notify: Notify,
@@ -36,6 +39,8 @@ impl BtcSubscriber {
     pub async fn new(config: BtcConfig) -> Result<Arc<Self>> {
         let builder = Builder::new(&config.esplora_url);
         let rpc_client = Arc::new(builder.build_async()?);
+
+        let address_tracker = Arc::new(tracker::AddressTracker::new(&config.bkp_public_keys)?);
 
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
@@ -48,6 +53,7 @@ impl BtcSubscriber {
             db,
             pool,
             rpc_client,
+            address_tracker,
             pending_events: Default::default(),
             pending_event_count: Default::default(),
             new_events_notify: Notify::new(),
@@ -82,10 +88,17 @@ impl BtcSubscriber {
     pub async fn verify(
         &self,
         account: UInt256,
-        btc_receiver: Script,
         blocks_to_confirm: u16,
+        deposit_account_id: u32,
         vote_data: BtcTonEventVoteData,
     ) -> Result<VerificationStatus> {
+        // TODO: get TSS pubkey from everscale-network
+        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
+
+        let btc_receiver = self
+            .address_tracker
+            .generate_script_pubkey(master_xpub, deposit_account_id)?;
+
         let rx = {
             let mut pending_events = self.pending_events.lock().await;
 

@@ -31,7 +31,7 @@ use crate::engine::keystore::*;
 use crate::engine::sol_subscriber::*;
 use crate::engine::ton_contracts::*;
 use crate::engine::ton_subscriber::*;
-use crate::engine::EngineContext;
+use crate::engine::{btc_subscriber, EngineContext};
 use crate::utils::*;
 
 /// Events part of relays logic
@@ -1563,10 +1563,7 @@ impl Bridge {
 
         // Get deposit account id
         let deposit_contract = ton_subscriber.wait_contract_state(deposit).await?;
-        let _deposit_account_id = BtcDepositContract(&deposit_contract).get_account_id()?;
-
-        // TODO: derive btc recipient using account_id
-        let btc_receiver = bitcoin::Script::new();
+        let deposit_account_id = BtcDepositContract(&deposit_contract).get_account_id()?;
 
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
@@ -1574,8 +1571,8 @@ impl Bridge {
         let message = match btc_subscriber
             .verify(
                 account,
-                btc_receiver,
                 blocks_to_confirm,
+                deposit_account_id,
                 event_init_data.vote_data,
             )
             .await

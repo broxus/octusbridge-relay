@@ -32,8 +32,7 @@ everscale-network = "0.5"
 futures-util = "0.3"
 hex = "0.4"
 hyper = { version = "0.14", features = ["server"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+miniscript = { version = "9.0.0", features = ["compiler"]}
 num-traits = "0.2"
 once_cell = "1.13.0"
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
@@ -54,6 +53,8 @@ tokio = { version = "1", features = [
     "signal",
     "parking_lot",
 ] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tryhard = "0.5.0"
 url = { version = "2.2.2", features = ["serde"] }
 

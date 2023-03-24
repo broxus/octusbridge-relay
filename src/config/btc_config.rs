@@ -12,6 +12,9 @@ pub struct BtcConfig {
     /// Path to rocks db containing UTXO balances endpoint
     pub rocks_db_path: String,
 
+    // Backup public keys
+    pub bkp_public_keys: [String; 3],
+
     /// Max simultaneous connection count. Default: 10
     #[serde(default = "const_usize::<10>")]
     pub pool_size: usize,
