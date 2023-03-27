@@ -146,6 +146,26 @@ impl BtcSubscriber {
         Ok(status)
     }
 
+    pub async fn commit(
+        &self,
+        deposit_account_id: u32,
+        vote_data: BtcTonEventVoteData,
+    ) -> Result<()> {
+        // TODO: get TSS pubkey from everscale-network
+        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
+
+        let btc_receiver = self
+            .address_tracker
+            .generate_script_pubkey(master_xpub, deposit_account_id)?;
+
+        self.db
+            .utxo_balance_storage()
+            .store_balance(btc_receiver, vote_data.amount as u64)
+            .await?;
+
+        Ok(())
+    }
+
     async fn update(&self) -> Result<()> {
         if self.pending_events.lock().await.is_empty() {
             // Wait until new events appeared or idle poll interval passed.
