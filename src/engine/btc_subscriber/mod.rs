@@ -1,4 +1,4 @@
-use std::collections::{hash_map, BinaryHeap};
+use std::collections::{hash_map, BTreeSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub struct BtcSubscriber {
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
     address_tracker: Arc<tracker::AddressTracker>,
-    utxo_balances: parking_lot::RwLock<BinaryHeap<BtcBalance>>,
+    utxo_balances: parking_lot::RwLock<BTreeSet<BtcBalance>>,
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
     pending_event_count: AtomicUsize,
     new_events_notify: Notify,
@@ -131,7 +131,7 @@ impl BtcSubscriber {
         let status = rx.await?;
 
         if let VerificationStatus::Exists = status {
-            self.utxo_balances.write().push(BtcBalance {
+            self.utxo_balances.write().insert(BtcBalance {
                 id: btc_receiver,
                 balance: vote_data.amount,
             });
@@ -152,7 +152,7 @@ impl BtcSubscriber {
             .address_tracker
             .generate_script_pubkey(master_xpub, deposit_account_id)?;
 
-        self.utxo_balances.write().push(BtcBalance {
+        self.utxo_balances.write().insert(BtcBalance {
             id: btc_receiver,
             balance: vote_data.amount,
         });
