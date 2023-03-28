@@ -114,8 +114,8 @@ pub struct BtcTonEventInitData {
 pub struct BtcTonEventVoteData {
     #[abi(address)]
     pub beneficiary: MsgAddressInt,
-    #[abi(uint128)]
-    pub amount: u128,
+    #[abi(uint64)]
+    pub amount: u64,
     #[abi(uint256)]
     pub transaction: UInt256,
     #[abi(uint32)]

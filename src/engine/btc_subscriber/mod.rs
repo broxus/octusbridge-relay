@@ -1,10 +1,10 @@
-use std::collections::hash_map;
+use std::collections::{hash_map, BinaryHeap};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bitcoin::blockdata::transaction;
 use bitcoin::hash_types::Txid;
 use bitcoin::hashes::Hash;
@@ -17,19 +17,17 @@ use ton_types::UInt256;
 
 use crate::config::*;
 use crate::engine::bridge::*;
-use crate::engine::btc_subscriber::db::Db;
 use crate::engine::ton_contracts::BtcTonEventVoteData;
 use crate::utils::*;
 
-pub mod db;
 pub mod tracker;
 
 pub struct BtcSubscriber {
     config: BtcConfig,
-    db: Arc<Db>,
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
     address_tracker: Arc<tracker::AddressTracker>,
+    utxo_balances: parking_lot::RwLock<BinaryHeap<BtcBalance>>,
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
     pending_event_count: AtomicUsize,
     new_events_notify: Notify,
@@ -44,16 +42,12 @@ impl BtcSubscriber {
 
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
-        let db = Db::new(&config.rocks_db_path, config.max_db_memory_usage)
-            .await
-            .context("Failed to create DB")?;
-
         let subscriber = Arc::new(Self {
             config,
-            db,
             pool,
             rpc_client,
             address_tracker,
+            utxo_balances: Default::default(),
             pending_events: Default::default(),
             pending_event_count: Default::default(),
             new_events_notify: Notify::new(),
@@ -137,10 +131,10 @@ impl BtcSubscriber {
         let status = rx.await?;
 
         if let VerificationStatus::Exists = status {
-            self.db
-                .utxo_balance_storage()
-                .store_balance(btc_receiver, vote_data.amount as u64)
-                .await?;
+            self.utxo_balances.write().push(BtcBalance {
+                id: btc_receiver,
+                balance: vote_data.amount,
+            });
         }
 
         Ok(status)
@@ -158,10 +152,10 @@ impl BtcSubscriber {
             .address_tracker
             .generate_script_pubkey(master_xpub, deposit_account_id)?;
 
-        self.db
-            .utxo_balance_storage()
-            .store_balance(btc_receiver, vote_data.amount as u64)
-            .await?;
+        self.utxo_balances.write().push(BtcBalance {
+            id: btc_receiver,
+            balance: vote_data.amount,
+        });
 
         Ok(())
     }
@@ -388,7 +382,7 @@ impl PendingEvent {
                 tx_data.tx_status.block_height.unwrap_or_default()
             ))
         } else if !tx_data.tx.output.contains(&TxOut {
-            value: event_data.amount as u64,
+            value: event_data.amount,
             script_pubkey: event_data.btc_receiver.clone(),
         }) {
             Err(format!(
@@ -409,7 +403,7 @@ impl PendingEvent {
 #[derive(Debug, Clone)]
 pub struct BtcTonEventData {
     pub tx_id: Txid,
-    pub amount: u128,
+    pub amount: u64,
     pub block_height: u32,
     pub block_hash: BlockHash,
     pub btc_receiver: Script,
@@ -419,6 +413,30 @@ pub struct BtcTonEventData {
 pub struct BtcTransactionData {
     pub tx: transaction::Transaction,
     pub tx_status: esplora_client::TxStatus,
+}
+
+#[derive(Debug, Clone, Eq)]
+struct BtcBalance {
+    id: Script,
+    balance: u64,
+}
+
+impl Ord for BtcBalance {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.balance.cmp(&self.balance).reverse()
+    }
+}
+
+impl PartialOrd for BtcBalance {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for BtcBalance {
+    fn eq(&self, other: &Self) -> bool {
+        self.balance == other.balance
+    }
 }
 
 type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
