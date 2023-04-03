@@ -61,18 +61,23 @@ pub struct Bridge {
     // Observers for pending BTC->TON events
     btc_ton_events_state: Arc<EventsState<BtcTonEvent>>,
 
+    // Observers for pending TON->BTC events
+    ton_btc_events_state: Arc<EventsState<TonBtcEvent>>,
+
     connectors_tx: AccountEventsTx<ConnectorEvent>,
     eth_ton_event_configurations_tx: AccountEventsTx<EthTonEventConfigurationEvent>,
     ton_eth_event_configurations_tx: AccountEventsTx<TonEthEventConfigurationEvent>,
     sol_ton_event_configurations_tx: AccountEventsTx<SolTonEventConfigurationEvent>,
     ton_sol_event_configurations_tx: AccountEventsTx<TonSolEventConfigurationEvent>,
     btc_ton_event_configurations_tx: AccountEventsTx<BtcTonEventConfigurationEvent>,
+    ton_btc_event_configurations_tx: AccountEventsTx<TonBtcEventConfigurationEvent>,
 
     total_active_eth_ton_event_configurations: AtomicUsize,
     total_active_ton_eth_event_configurations: AtomicUsize,
     total_active_sol_ton_event_configurations: AtomicUsize,
     total_active_ton_sol_event_configurations: AtomicUsize,
     total_active_btc_ton_event_configurations: AtomicUsize,
+    total_active_ton_btc_event_configurations: AtomicUsize,
 }
 
 impl Bridge {
@@ -90,11 +95,14 @@ impl Bridge {
             mpsc::unbounded_channel();
         let (btc_ton_event_configurations_tx, btc_ton_event_configurations_rx) =
             mpsc::unbounded_channel();
+        let (ton_btc_event_configurations_tx, ton_btc_event_configurations_rx) =
+            mpsc::unbounded_channel();
         let (eth_ton_events_tx, eth_ton_events_rx) = mpsc::unbounded_channel();
         let (ton_eth_events_tx, ton_eth_events_rx) = mpsc::unbounded_channel();
         let (sol_ton_events_tx, sol_ton_events_rx) = mpsc::unbounded_channel();
         let (ton_sol_events_tx, ton_sol_events_rx) = mpsc::unbounded_channel();
         let (btc_ton_events_tx, btc_ton_events_rx) = mpsc::unbounded_channel();
+        let (ton_btc_events_tx, ton_btc_events_rx) = mpsc::unbounded_channel();
 
         let bridge_observer = AccountObserver::new(&bridge_events_tx);
 
@@ -108,17 +116,20 @@ impl Bridge {
             sol_ton_events_state: EventsState::new(sol_ton_events_tx),
             ton_sol_events_state: EventsState::new(ton_sol_events_tx),
             btc_ton_events_state: EventsState::new(btc_ton_events_tx),
+            ton_btc_events_state: EventsState::new(ton_btc_events_tx),
             connectors_tx,
             eth_ton_event_configurations_tx,
             ton_eth_event_configurations_tx,
             sol_ton_event_configurations_tx,
             ton_sol_event_configurations_tx,
             btc_ton_event_configurations_tx,
+            ton_btc_event_configurations_tx,
             total_active_eth_ton_event_configurations: Default::default(),
             total_active_ton_eth_event_configurations: Default::default(),
             total_active_sol_ton_event_configurations: Default::default(),
             total_active_ton_sol_event_configurations: Default::default(),
             total_active_btc_ton_event_configurations: Default::default(),
+            total_active_ton_btc_event_configurations: Default::default(),
         });
 
         // Prepare listeners
@@ -173,6 +184,13 @@ impl Bridge {
                 btc_ton_event_configurations_rx,
                 Self::process_btc_ton_event_configuration_event,
             );
+
+            start_listening_events(
+                &bridge,
+                "TonBtcEventConfigurationContract",
+                ton_btc_event_configurations_rx,
+                Self::process_ton_btc_event_configuration_event,
+            );
         }
 
         start_listening_events(
@@ -212,6 +230,13 @@ impl Bridge {
                 btc_ton_events_rx,
                 Self::process_btc_ton_event,
             );
+
+            start_listening_events(
+                &bridge,
+                "TonBtcEventContract",
+                ton_btc_events_rx,
+                Self::process_ton_btc_event,
+            );
         }
 
         // Subscribe bridge account to transactions
@@ -236,6 +261,7 @@ impl Bridge {
             pending_sol_ton_event_count: self.sol_ton_events_state.count.load(Ordering::Acquire),
             pending_ton_sol_event_count: self.ton_sol_events_state.count.load(Ordering::Acquire),
             pending_btc_ton_event_count: self.btc_ton_events_state.count.load(Ordering::Acquire),
+            pending_ton_btc_event_count: self.ton_btc_events_state.count.load(Ordering::Acquire),
             total_active_eth_ton_event_configurations: self
                 .total_active_eth_ton_event_configurations
                 .load(Ordering::Acquire),
@@ -250,6 +276,9 @@ impl Bridge {
                 .load(Ordering::Acquire),
             total_active_btc_ton_event_configurations: self
                 .total_active_btc_ton_event_configurations
+                .load(Ordering::Acquire),
+            total_active_ton_btc_event_configurations: self
+                .total_active_ton_btc_event_configurations
                 .load(Ordering::Acquire),
         }
     }
@@ -460,6 +489,43 @@ impl Bridge {
                     .get_mut(&account)
                     .ok_or(BridgeError::UnknownConfiguration)?;
                 configuration.details.network_configuration.end_block_number = end_block_number;
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_ton_btc_event_configuration_event(
+        self: Arc<Self>,
+        (account, event): (UInt256, TonBtcEventConfigurationEvent),
+    ) -> Result<()> {
+        match event {
+            // Create observer on each deployment event
+            TonBtcEventConfigurationEvent::EventDeployed { address, .. } => {
+                if self.add_pending_event(address, &self.ton_btc_events_state) {
+                    let this = self.clone();
+                    self.spawn_background_task("preprocess TON->BTC event", async move {
+                        this.preprocess_event(address, &this.ton_btc_events_state)
+                            .await
+                    });
+                } else {
+                    // NOTE: Each TON event must be unique on the contracts level,
+                    // so receiving message with duplicated address is
+                    // a signal that something went wrong
+                    tracing::warn!(
+                        configuration = %DisplayAddr(account),
+                        event = %DisplayAddr(address),
+                        "got deployment message for pending event",
+                    );
+                }
+            }
+            // Update configuration state
+            TonBtcEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
+                let mut state = self.state.write().await;
+                let configuration = state
+                    .ton_btc_event_configurations
+                    .get_mut(&account)
+                    .ok_or(BridgeError::UnknownConfiguration)?;
+                configuration.details.network_configuration.end_timestamp = end_timestamp;
             }
         }
         Ok(())
@@ -762,6 +828,62 @@ impl Bridge {
         Ok(())
     }
 
+    async fn process_ton_btc_event(
+        self: Arc<Self>,
+        (account, event): (UInt256, (TonBtcEvent, EventStatus)),
+    ) -> Result<()> {
+        use dashmap::mapref::entry::Entry;
+
+        let our_public_key = self.context.keystore.ton.public_key();
+
+        // Use flag to update counter outside events map lock to reduce its duration
+        let mut event_removed = false;
+
+        // Handle only known TON events
+        if let Entry::Occupied(entry) = self.ton_btc_events_state.pending.entry(account) {
+            let remove_entry = || {
+                // Remove pending event
+                entry.remove();
+                event_removed = true;
+            };
+
+            match event {
+                // Remove event if voting process was finished
+                (TonBtcEvent::Rejected, _)
+                | (_, EventStatus::Confirmed | EventStatus::Rejected) => remove_entry(),
+                // Handle event initialization
+                (TonBtcEvent::ReceiveRoundRelays { keys }, _) => {
+                    // Check if event contains our key
+                    if keys.contains(our_public_key) {
+                        // Start voting
+                        self.spawn_background_task(
+                            "update TON->BTC event",
+                            self.clone().update_ton_btc_event(account),
+                        );
+                    } else {
+                        remove_entry();
+                    }
+                }
+                // Handle our confirmation or rejection
+                (TonBtcEvent::Confirm { public_key } | TonBtcEvent::Reject { public_key }, _)
+                    if public_key == our_public_key =>
+                {
+                    remove_entry();
+                }
+                _ => { /* Ignore other events */ }
+            }
+        }
+
+        // Update metrics
+        if event_removed {
+            self.ton_btc_events_state
+                .count
+                .fetch_sub(1, Ordering::Release);
+        }
+
+        Ok(())
+    }
+
     /// Check deployed event contract in parallel with transactions processing
     async fn preprocess_event<T: EventExt>(
         self: &Arc<Bridge>,
@@ -777,7 +899,7 @@ impl Bridge {
         match base_event_contract.process(
             self.context.keystore.ton.public_key(),
             T::REQUIRE_ALL_SIGNATURES,
-            T::REQUIRE_COMMIT_TO_DB,
+            T::REQUIRE_COMMIT,
         )? {
             // Event was not activated yet, so it will be processed in
             // event transactions subscription
@@ -1574,7 +1696,7 @@ impl Bridge {
             EventAction::Vote => {
                 // Verify BTC->TON event and create message to event contract
                 let message = match btc_subscriber
-                    .verify(
+                    .verify_btc_ton_event(
                         account,
                         blocks_to_confirm,
                         deposit_account_id,
@@ -1640,6 +1762,10 @@ impl Bridge {
         }
 
         Ok(())
+    }
+
+    async fn update_ton_btc_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        todo!()
     }
 
     async fn check_connector_contract(&self, connector_account: UInt256) -> Result<()> {
@@ -1848,7 +1974,7 @@ impl Bridge {
                     configuration_contract,
                 )
                 .context("Failed to add TON->SOL event configuration")?,
-            // Extract and populate ETH->TON event configuration details
+            // Extract and populate BTC->TON event configuration details
             EventType::BtcTon => self
                 .add_btc_ton_event_configuration(
                     state,
@@ -1856,6 +1982,14 @@ impl Bridge {
                     configuration_contract,
                 )
                 .context("Failed to add BTC->TON event configuration")?,
+            // Extract and populate TON->BTC event configuration details
+            EventType::TonBtc => self
+                .add_ton_btc_event_configuration(
+                    state,
+                    configuration_account,
+                    configuration_contract,
+                )
+                .context("Failed to add TON->BTC event configuration")?,
         };
 
         // Done
@@ -2233,6 +2367,73 @@ impl Bridge {
         Ok(())
     }
 
+    fn add_ton_btc_event_configuration(
+        &self,
+        state: &mut BridgeState,
+        account: &UInt256,
+        contract: &ExistingContract,
+    ) -> Result<()> {
+        // Get configuration details
+        let details = TonBtcEventConfigurationContract(contract)
+            .get_details()
+            .context("Failed to get TON->BTC event configuration details")?;
+
+        // Check if configuration is expired
+        let current_timestamp = self.context.ton_subscriber.current_utime();
+        if details.is_expired(current_timestamp) {
+            // Do nothing in that case
+            tracing::warn!(
+                configuration = %DisplayAddr(account),
+                current_timestamp,
+                end_timestamp = details.network_configuration.end_timestamp,
+                "ignoring disabled TON->BTC event configuration",
+            );
+            return Ok(());
+        };
+
+        // Add unique event hash
+        add_event_code_hash(
+            &mut state.event_code_hashes,
+            &details.basic_configuration.event_code,
+            EventType::TonBtc,
+        )?;
+
+        // Add configuration entry
+        let observer = AccountObserver::new(&self.ton_btc_event_configurations_tx);
+        match state.ton_btc_event_configurations.entry(*account) {
+            hash_map::Entry::Vacant(entry) => {
+                tracing::info!(
+                    configuration = %DisplayAddr(account),
+                    ?details,
+                    "added new TON->BTC event configuration"
+                );
+
+                self.total_active_ton_btc_event_configurations
+                    .fetch_add(1, Ordering::Release);
+
+                entry.insert(TonBtcEventConfigurationState {
+                    details,
+                    _observer: observer.clone(),
+                });
+            }
+            hash_map::Entry::Occupied(_) => {
+                tracing::info!(
+                    configuration = %DisplayAddr(account),
+                    "TON->BTC event configuration already exists",
+                );
+                return Err(BridgeError::EventConfigurationAlreadyExists.into());
+            }
+        };
+
+        // Subscribe to TON events
+        self.context
+            .ton_subscriber
+            .add_transactions_subscription([*account], &observer);
+
+        // Done
+        Ok(())
+    }
+
     async fn get_all_events(self: &Arc<Self>) -> Result<()> {
         type AccountsSet = FxHashSet<UInt256>;
 
@@ -2539,10 +2740,17 @@ impl Bridge {
                     state.has_expired_sol_ton_event_configurations(current_utime)
                 };
 
+                // Check expired configurations
+                let has_expired_ton_btc_configurations = {
+                    let state = bridge.state.read().await;
+                    state.has_expired_ton_btc_event_configurations(current_utime)
+                };
+
                 // Do nothing if there are not expired configurations
                 if !has_expired_ton_eth_configurations
                     && !has_expired_ton_sol_configurations
                     && !has_expired_sol_ton_configurations
+                    && !has_expired_ton_btc_configurations
                 {
                     continue;
                 }
@@ -2622,11 +2830,30 @@ impl Bridge {
                 bridge
                     .total_active_sol_ton_event_configurations
                     .fetch_sub(total_removed, Ordering::Release);
+
+                // Remove TON->BTC expired configurations
+                let mut total_removed = 0;
+                state.ton_btc_event_configurations.retain(|account, state| {
+                    if state.details.is_expired(current_utime) {
+                        tracing::warn!(
+                            configuration = %DisplayAddr(account),
+                            current_utime,
+                            "removing TON->BTC event configuration",
+                        );
+                        total_removed += 1;
+                        false
+                    } else {
+                        true
+                    }
+                });
+                bridge
+                    .total_active_ton_btc_event_configurations
+                    .fetch_sub(total_removed, Ordering::Release);
             }
         });
     }
 
-    /// Creates ETH event observer if it doesn't exist and subscribes it to transactions
+    /// Creates event observer if it doesn't exist and subscribes it to transactions
     fn add_pending_event<T>(&self, account: UInt256, state: &EventsState<T>) -> bool
     where
         T: std::fmt::Debug + ReadFromTransaction + 'static,
@@ -2675,11 +2902,13 @@ pub struct BridgeMetrics {
     pub pending_sol_ton_event_count: usize,
     pub pending_ton_sol_event_count: usize,
     pub pending_btc_ton_event_count: usize,
+    pub pending_ton_btc_event_count: usize,
     pub total_active_eth_ton_event_configurations: usize,
     pub total_active_ton_eth_event_configurations: usize,
     pub total_active_sol_ton_event_configurations: usize,
     pub total_active_ton_sol_event_configurations: usize,
     pub total_active_btc_ton_event_configurations: usize,
+    pub total_active_ton_btc_event_configurations: usize,
 }
 
 struct EventsState<T> {
@@ -2723,7 +2952,7 @@ struct PendingEventState<T> {
 #[async_trait::async_trait]
 trait EventExt {
     const REQUIRE_ALL_SIGNATURES: bool;
-    const REQUIRE_COMMIT_TO_DB: bool;
+    const REQUIRE_COMMIT: bool;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()>;
 }
@@ -2731,7 +2960,7 @@ trait EventExt {
 #[async_trait::async_trait]
 impl EventExt for EthTonEvent {
     const REQUIRE_ALL_SIGNATURES: bool = false;
-    const REQUIRE_COMMIT_TO_DB: bool = false;
+    const REQUIRE_COMMIT: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
         bridge.update_eth_ton_event(account).await
@@ -2741,7 +2970,7 @@ impl EventExt for EthTonEvent {
 #[async_trait::async_trait]
 impl EventExt for TonEthEvent {
     const REQUIRE_ALL_SIGNATURES: bool = true;
-    const REQUIRE_COMMIT_TO_DB: bool = false;
+    const REQUIRE_COMMIT: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
         bridge.update_ton_eth_event(account).await
@@ -2751,7 +2980,7 @@ impl EventExt for TonEthEvent {
 #[async_trait::async_trait]
 impl EventExt for SolTonEvent {
     const REQUIRE_ALL_SIGNATURES: bool = false;
-    const REQUIRE_COMMIT_TO_DB: bool = false;
+    const REQUIRE_COMMIT: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
         bridge.update_sol_ton_event(account).await
@@ -2761,7 +2990,7 @@ impl EventExt for SolTonEvent {
 #[async_trait::async_trait]
 impl EventExt for TonSolEvent {
     const REQUIRE_ALL_SIGNATURES: bool = true;
-    const REQUIRE_COMMIT_TO_DB: bool = false;
+    const REQUIRE_COMMIT: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
         bridge.update_ton_sol_event(account).await
@@ -2771,10 +3000,20 @@ impl EventExt for TonSolEvent {
 #[async_trait::async_trait]
 impl EventExt for BtcTonEvent {
     const REQUIRE_ALL_SIGNATURES: bool = false;
-    const REQUIRE_COMMIT_TO_DB: bool = true;
+    const REQUIRE_COMMIT: bool = true;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
         bridge.update_btc_ton_event(account).await
+    }
+}
+
+#[async_trait::async_trait]
+impl EventExt for TonBtcEvent {
+    const REQUIRE_ALL_SIGNATURES: bool = false;
+    const REQUIRE_COMMIT: bool = true;
+
+    async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
+        bridge.update_ton_btc_event(account).await
     }
 }
 
@@ -2787,6 +3026,7 @@ struct BridgeState {
     sol_ton_event_configurations: SolTonEventConfigurationsMap,
     ton_sol_event_configurations: TonSolEventConfigurationsMap,
     btc_ton_event_configurations: BtcTonEventConfigurationsMap,
+    ton_btc_event_configurations: TonBtcEventConfigurationsMap,
 
     /// Unique event contracts code hashes.
     ///
@@ -2813,6 +3053,12 @@ impl BridgeState {
         self.sol_ton_event_configurations
             .iter()
             .any(|(_, state)| state.details.is_expired(current_timestamp as u64))
+    }
+
+    fn has_expired_ton_btc_event_configurations(&self, current_timestamp: u32) -> bool {
+        self.ton_btc_event_configurations
+            .iter()
+            .any(|(_, state)| state.details.is_expired(current_timestamp))
     }
 
     fn unique_eth_ton_event_configurations(&self) -> FxHashSet<UInt256> {
@@ -2913,7 +3159,7 @@ impl EventBaseContract<'_> {
         &self,
         public_key: &UInt256,
         require_all_signatures: bool,
-        require_commit_to_db: bool,
+        require_commit: bool,
     ) -> Result<EventAction> {
         const SUPPORTED_API_VERSION: u32 = 2;
 
@@ -2937,7 +3183,7 @@ impl EventBaseContract<'_> {
                 EventAction::Vote
             }
             // Special case for BTC->TON event to commit UTXO in db
-            EventStatus::Confirmed if require_commit_to_db => EventAction::Commit,
+            EventStatus::Confirmed if require_commit => EventAction::Commit,
             // Discard event in other cases
             _ => EventAction::Remove,
         })
@@ -2951,7 +3197,7 @@ enum EventAction {
     Remove,
     /// Continue voting for event
     Vote,
-    /// Commit event to db
+    /// Commit event to cache
     Commit,
 }
 
@@ -3029,6 +3275,22 @@ struct BtcTonEventConfigurationState {
 
     /// Observer must live as long as configuration lives
     _observer: Arc<AccountObserver<BtcTonEventConfigurationEvent>>,
+}
+
+/// TON->ETH event configuration data
+#[derive(Clone)]
+struct TonBtcEventConfigurationState {
+    /// Configuration details
+    details: TonBtcEventConfigurationDetails,
+
+    /// Observer must live as long as configuration lives
+    _observer: Arc<AccountObserver<TonBtcEventConfigurationEvent>>,
+}
+
+impl TonBtcEventConfigurationDetails {
+    fn is_expired(&self, current_timestamp: u32) -> bool {
+        (1..current_timestamp).contains(&self.network_configuration.end_timestamp)
+    }
 }
 
 /// Parsed bridge event
@@ -3256,6 +3518,37 @@ impl ReadFromTransaction for BtcTonEventConfigurationEvent {
                     return None;
                 }
                 Some(Self::EventsDeployed { events })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum TonBtcEventConfigurationEvent {
+    EventDeployed { address: UInt256 },
+    SetEndTimestamp { end_timestamp: u32 },
+}
+
+impl ReadFromTransaction for TonBtcEventConfigurationEvent {
+    fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
+        let in_msg_body = ctx.in_msg_internal()?.body()?;
+
+        let set_end_timestamp = ton_btc_event_configuration_contract::set_end_timestamp();
+
+        match read_function_id(&in_msg_body).ok()? {
+            id if id == set_end_timestamp.input_id => {
+                let end_timestamp = set_end_timestamp
+                    .decode_input(in_msg_body, true)
+                    .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
+                    .ok()?;
+
+                Some(Self::SetEndTimestamp { end_timestamp })
+            }
+            _ => {
+                let events = ctx.find_new_event_contract_addresses();
+                Some(Self::EventDeployed {
+                    address: events.into_iter().next()?,
+                })
             }
         }
     }
@@ -3533,6 +3826,64 @@ impl ReadFromTransaction for BtcTonEvent {
     }
 }
 
+#[derive(Debug, Clone)]
+enum TonBtcEvent {
+    ReceiveRoundRelays { keys: Vec<UInt256> },
+    Confirm { public_key: UInt256 },
+    Reject { public_key: UInt256 },
+    Rejected,
+    Closed,
+}
+
+impl ReadFromTransaction for TonBtcEvent {
+    fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
+        if has_rejected_event(ctx) {
+            return Some(Self::Rejected);
+        }
+
+        let in_msg = ctx.in_msg;
+        let event = match in_msg.header() {
+            ton_block::CommonMsgInfo::ExtInMsgInfo(_) => {
+                let (public_key, body) = read_external_in_msg(&in_msg.body()?)?;
+
+                match read_function_id(&body) {
+                    Ok(id) if id == ton_btc_event_contract::confirm().input_id => {
+                        Some(TonBtcEvent::Confirm { public_key })
+                    }
+                    Ok(id) if id == ton_btc_event_contract::reject().input_id => {
+                        Some(TonBtcEvent::Reject { public_key })
+                    }
+                    _ => None,
+                }
+            }
+            ton_block::CommonMsgInfo::IntMsgInfo(_) => {
+                let body = in_msg.body()?;
+
+                match read_function_id(&body) {
+                    Ok(id) if id == base_event_contract::receive_round_relays().input_id => {
+                        let RelayKeys { items } = base_event_contract::receive_round_relays()
+                            .decode_input(body, true)
+                            .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
+                            .ok()?;
+
+                        Some(TonBtcEvent::ReceiveRoundRelays { keys: items })
+                    }
+                    _ => None,
+                }
+            }
+            ton_block::CommonMsgInfo::ExtOutMsgInfo(_) => None,
+        };
+
+        if event.is_none() {
+            let balance = ctx.get_account_state().ok()?.account.storage.balance.grams;
+            if balance.0 < MIN_EVENT_BALANCE {
+                return Some(Self::Closed);
+            }
+        }
+
+        event
+    }
+}
 fn read_external_in_msg(body: &ton_types::SliceData) -> Option<(UInt256, ton_types::SliceData)> {
     match unpack_headers::<DefaultHeaders>(body) {
         Ok(((Some(public_key), _, _), body)) => Some((public_key, body)),
@@ -3614,6 +3965,7 @@ type TonEthEventConfigurationsMap = FxHashMap<UInt256, TonEthEventConfigurationS
 type SolTonEventConfigurationsMap = FxHashMap<UInt256, SolTonEventConfigurationState>;
 type TonSolEventConfigurationsMap = FxHashMap<UInt256, TonSolEventConfigurationState>;
 type BtcTonEventConfigurationsMap = FxHashMap<UInt256, BtcTonEventConfigurationState>;
+type TonBtcEventConfigurationsMap = FxHashMap<UInt256, TonBtcEventConfigurationState>;
 type EventCodeHashesMap = FxHashMap<UInt256, EventType>;
 
 #[derive(Debug, Clone, Hash)]

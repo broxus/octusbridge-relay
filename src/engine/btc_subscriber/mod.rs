@@ -79,7 +79,7 @@ impl BtcSubscriber {
         });
     }
 
-    pub async fn verify(
+    pub async fn verify_btc_ton_event(
         &self,
         account: UInt256,
         blocks_to_confirm: u16,

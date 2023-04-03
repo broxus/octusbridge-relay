@@ -345,6 +345,7 @@ pub enum EventType {
     SolTon = 2,
     TonSol = 3,
     BtcTon = 4,
+    TonBtc = 5,
 }
 
 impl std::fmt::Display for EventType {
@@ -355,6 +356,7 @@ impl std::fmt::Display for EventType {
             Self::SolTon => f.write_str("SOL->TON"),
             Self::TonSol => f.write_str("TON->SOL"),
             Self::BtcTon => f.write_str("BTC->TON"),
+            Self::TonBtc => f.write_str("TON->BTC"),
         }
     }
 }
