@@ -865,9 +865,12 @@ impl Bridge {
                     }
                 }
                 // Handle our confirmation or rejection
-                (TonBtcEvent::Confirm { public_key } | TonBtcEvent::Reject { public_key }, _)
-                    if public_key == our_public_key =>
-                {
+                (
+                    TonBtcEvent::Confirm { public_key }
+                    | TonBtcEvent::Reject { public_key }
+                    | TonBtcEvent::Cancel { public_key },
+                    _,
+                ) if public_key == our_public_key => {
                     remove_entry();
                 }
                 _ => { /* Ignore other events */ }
@@ -1764,7 +1767,7 @@ impl Bridge {
         Ok(())
     }
 
-    async fn update_ton_btc_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+    async fn update_ton_btc_event(self: Arc<Self>, _account: UInt256) -> Result<()> {
         todo!()
     }
 
@@ -3831,8 +3834,10 @@ enum TonBtcEvent {
     ReceiveRoundRelays { keys: Vec<UInt256> },
     Confirm { public_key: UInt256 },
     Reject { public_key: UInt256 },
+    Cancel { public_key: UInt256 },
     Rejected,
     Closed,
+    AddWithdrawal,
 }
 
 impl ReadFromTransaction for TonBtcEvent {
@@ -3852,6 +3857,9 @@ impl ReadFromTransaction for TonBtcEvent {
                     }
                     Ok(id) if id == ton_btc_event_contract::reject().input_id => {
                         Some(TonBtcEvent::Reject { public_key })
+                    }
+                    Ok(id) if id == ton_btc_event_contract::cancel().input_id => {
+                        Some(TonBtcEvent::Cancel { public_key })
                     }
                     _ => None,
                 }
