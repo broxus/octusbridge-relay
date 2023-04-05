@@ -2450,6 +2450,7 @@ impl Bridge {
             unique_sol_ton_event_configurations: Arc<AccountsSet>,
             unique_ton_sol_event_configurations: Arc<AccountsSet>,
             unique_btc_ton_event_configurations: Arc<AccountsSet>,
+            unique_ton_btc_event_configurations: Arc<AccountsSet>,
         ) -> Result<bool> {
             let our_public_key = bridge.context.keystore.ton.public_key();
             let has_sol_subscriber = bridge.context.sol_subscriber.is_some();
@@ -2608,6 +2609,25 @@ impl Bridge {
                                     );
                                 }
                             }
+                            EventType::TonBtc if has_btc_subscriber => {
+                                let configuration = check_configuration!(TonBtcEventContract);
+
+                                if !unique_ton_btc_event_configurations.contains(&configuration) {
+                                    tracing::warn!(
+                                        event = %DisplayAddr(hash),
+                                        configuration = %DisplayAddr(configuration),
+                                        "TON->BTC event configuration not found"
+                                    );
+                                    return Ok(true);
+                                }
+
+                                if bridge.add_pending_event(hash, &bridge.ton_btc_events_state) {
+                                    bridge.spawn_background_task(
+                                        "initial update BTC->TON event",
+                                        bridge.clone().update_ton_btc_event(hash),
+                                    );
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -2649,6 +2669,8 @@ impl Bridge {
             Arc::new(state.unique_ton_sol_event_configurations());
         let unique_btc_ton_event_configurations =
             Arc::new(state.unique_btc_ton_event_configurations());
+        let unique_ton_btc_event_configurations =
+            Arc::new(state.unique_ton_btc_event_configurations());
 
         // Process shards in parallel
         tracing::info!("started searching for all events");
@@ -2668,6 +2690,8 @@ impl Bridge {
                     unique_ton_sol_event_configurations.clone();
                 let unique_btc_ton_event_configurations =
                     unique_btc_ton_event_configurations.clone();
+                let unique_ton_btc_event_configurations =
+                    unique_ton_btc_event_configurations.clone();
                 let results_tx = results_tx.clone();
 
                 tokio::spawn(tokio::task::spawn_blocking(move || {
@@ -2681,6 +2705,7 @@ impl Bridge {
                         unique_sol_ton_event_configurations,
                         unique_ton_sol_event_configurations,
                         unique_btc_ton_event_configurations,
+                        unique_ton_btc_event_configurations,
                     );
                     tracing::info!(
                         shard = shard_ident.shard_prefix_as_str_with_tag(),
@@ -3083,6 +3108,10 @@ impl BridgeState {
     fn unique_btc_ton_event_configurations(&self) -> FxHashSet<UInt256> {
         self.btc_ton_event_configurations.keys().copied().collect()
     }
+
+    fn unique_ton_btc_event_configurations(&self) -> FxHashSet<UInt256> {
+        self.ton_btc_event_configurations.keys().copied().collect()
+    }
 }
 
 fn add_event_code_hash(
@@ -3357,6 +3386,31 @@ impl TxContext<'_> {
                         .map_err(anyhow::Error::from)
                 }) {
                     Ok(parsed) => result.push(only_account_hash(parsed)),
+                    Err(e) => {
+                        tracing::error!(
+                            tx = self.transaction_hash.to_hex_string(),
+                            "failed to parse NewEventContract event: {e:?}",
+                        );
+                    }
+                }
+            }
+        });
+
+        result
+    }
+
+    fn find_withdrawals(&self) -> Vec<BtcWithdrawal> {
+        let event = ton_btc_event_contract::events::add_withdrawal();
+
+        let mut result: Vec<BtcWithdrawal> = Vec::new();
+        self.iterate_events(|id, body| {
+            if id == event.id {
+                match event.decode_input(body).and_then(|tokens| {
+                    tokens
+                        .unpack_first::<BtcWithdrawal>()
+                        .map_err(anyhow::Error::from)
+                }) {
+                    Ok(parsed) => result.push(parsed),
                     Err(e) => {
                         tracing::error!(
                             tx = self.transaction_hash.to_hex_string(),
@@ -3831,13 +3885,23 @@ impl ReadFromTransaction for BtcTonEvent {
 
 #[derive(Debug, Clone)]
 enum TonBtcEvent {
-    ReceiveRoundRelays { keys: Vec<UInt256> },
-    Confirm { public_key: UInt256 },
-    Reject { public_key: UInt256 },
-    Cancel { public_key: UInt256 },
+    ReceiveRoundRelays {
+        keys: Vec<UInt256>,
+    },
+    Confirm {
+        public_key: UInt256,
+    },
+    Reject {
+        public_key: UInt256,
+    },
+    Cancel {
+        public_key: UInt256,
+    },
+    Withdrawals {
+        withdrawals: Vec<(bitcoin::Script, u64)>,
+    },
     Rejected,
     Closed,
-    AddWithdrawal,
 }
 
 impl ReadFromTransaction for TonBtcEvent {
@@ -3876,7 +3940,22 @@ impl ReadFromTransaction for TonBtcEvent {
 
                         Some(TonBtcEvent::ReceiveRoundRelays { keys: items })
                     }
-                    _ => None,
+                    _ => {
+                        let events = ctx.find_withdrawals();
+                        let withdrawals = events
+                            .into_iter()
+                            .map(|w| {
+                                (
+                                    bitcoin::PublicKey::from_slice(&w.recipient)
+                                        .map(|pk| bitcoin::Script::new_p2pk(&pk))
+                                        .trust_me(),
+                                    w.amount,
+                                )
+                            })
+                            .collect();
+
+                        Some(Self::Withdrawals { withdrawals })
+                    }
                 }
             }
             ton_block::CommonMsgInfo::ExtOutMsgInfo(_) => None,

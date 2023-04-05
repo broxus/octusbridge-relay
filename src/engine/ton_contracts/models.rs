@@ -138,10 +138,10 @@ pub struct TonBtcEventInitData {
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct TonBtcEventVoteData {
-    #[abi(uint256)]
-    pub receiver: UInt256,
-    #[abi(uint64)]
-    pub amount: u64,
+    #[abi(uint32)]
+    pub period_id: u32,
+    #[abi(uint32)]
+    pub end: u32,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -336,6 +336,14 @@ pub struct TonSolEventConfiguration {
     pub execute_instruction: u8,
     #[abi(uint8)]
     pub execute_payload_instruction: u8,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct BtcWithdrawal {
+    #[abi(bytes)]
+    pub recipient: Vec<u8>,
+    #[abi(uint64)]
+    pub amount: u64,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, PackAbi, UnpackAbi, KnownParamType)]
