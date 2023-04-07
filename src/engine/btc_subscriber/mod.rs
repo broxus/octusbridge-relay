@@ -150,6 +150,41 @@ impl BtcSubscriber {
         todo!()
     }
 
+    pub async fn commit_btc_ton(
+        &self,
+        deposit_account_id: u32,
+        vote_data: BtcTonEventVoteData,
+    ) -> Result<()> {
+        // TODO: get TSS pubkey from everscale-network
+        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
+
+        let btc_receiver = self
+            .address_tracker
+            .generate_script_pubkey(master_xpub, deposit_account_id)?;
+
+        let mut utxo_balances = self.utxo_balances.lock().await;
+        utxo_balances.insert(BtcBalance {
+            id: btc_receiver,
+            balance: vote_data.amount,
+        });
+
+        Ok(())
+    }
+
+    pub async fn commit_ton_btc(&self, tx: &[u8]) -> Result<()> {
+        let tx: transaction::Transaction = bitcoin::consensus::deserialize(tx)?;
+
+        let mut utxo_balances = self.utxo_balances.lock().await;
+        for out in tx.output {
+            utxo_balances.remove(&BtcBalance {
+                id: out.script_pubkey,
+                balance: out.value,
+            });
+        }
+
+        Ok(())
+    }
+
     pub async fn add_pending_withdrawal(
         &self,
         account: UInt256,
@@ -172,39 +207,6 @@ impl BtcSubscriber {
     pub async fn remove_pending_withdrawals(&self, account: UInt256) -> Result<()> {
         let mut withdrawal = self.pending_withdrawals.lock().await;
         withdrawal.remove(&account);
-
-        Ok(())
-    }
-
-    pub async fn commit(
-        &self,
-        deposit_account_id: u32,
-        vote_data: BtcTonEventVoteData,
-    ) -> Result<()> {
-        // TODO: get TSS pubkey from everscale-network
-        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
-
-        let btc_receiver = self
-            .address_tracker
-            .generate_script_pubkey(master_xpub, deposit_account_id)?;
-
-        let mut utxo_balances = self.utxo_balances.lock().await;
-        utxo_balances.insert(BtcBalance {
-            id: btc_receiver,
-            balance: vote_data.amount,
-        });
-
-        Ok(())
-    }
-
-    pub async fn remove(&self, tx: transaction::Transaction) -> Result<()> {
-        let mut utxo_balances = self.utxo_balances.lock().await;
-        for out in tx.output {
-            utxo_balances.remove(&BtcBalance {
-                id: out.script_pubkey,
-                balance: out.value,
-            });
-        }
 
         Ok(())
     }

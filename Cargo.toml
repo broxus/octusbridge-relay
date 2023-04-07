@@ -12,7 +12,6 @@ argh = "0.1"
 async-trait = "0.1"
 atty = "0.2"
 base64 = "0.13"
-bigdecimal = "0.3.0"
 bitcoin = { version = "0.29.2", features = ["serde"] }
 borsh = "0.9.3"
 broxus-util = { version = "0.2", default-features = false, features = [

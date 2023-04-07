@@ -137,6 +137,12 @@ impl TonBtcEventContract<'_> {
             .unpack_first()?;
         Ok(event_init_data)
     }
+
+    pub fn get_transactions(&self) -> Result<TonBtcTransactions> {
+        let function = ton_btc_event_contract::get_transactions();
+        let transactions = self.0.run_local(function, &[])?.unpack_first()?;
+        Ok(transactions)
+    }
 }
 
 pub struct EventConfigurationBaseContract<'a>(pub &'a ExistingContract);

@@ -1831,7 +1831,7 @@ impl Bridge {
 
         // Commit deposit
         if let Err(e) = btc_subscriber
-            .commit(deposit_account_id, event_init_data.vote_data)
+            .commit_btc_ton(deposit_account_id, event_init_data.vote_data)
             .await
         {
             tracing::error!(event = %DisplayAddr(account),"failed to commit BTC->TON event: {e:?}",);
@@ -1907,6 +1907,28 @@ impl Bridge {
     }
 
     async fn commit_ton_btc_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let btc_subscriber = match &self.context.btc_subscriber {
+            Some(btc_subscriber) => btc_subscriber,
+            _ => return Ok(()),
+        };
+
+        let ton_subscriber = &self.context.ton_subscriber;
+
+        // Wait contract state
+        let contract = ton_subscriber.wait_contract_state(account).await?;
+
+        // Get confirmed transactions
+        let transactions = TonBtcEventContract(&contract).get_transactions()?;
+
+        if let Some(tx) = transactions.transactions.get(&account) {
+            if let Err(e) = btc_subscriber.commit_ton_btc(tx).await {
+                tracing::error!(event = %DisplayAddr(account),"failed to commit TON->BTC event: {e:?}",);
+            }
+        }
+
+        // Remove subscription
+        self.ton_btc_events_state.remove(&account);
+
         Ok(())
     }
 

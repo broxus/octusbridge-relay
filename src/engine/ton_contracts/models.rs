@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use nekoton_abi::*;
 use ton_block::MsgAddressInt;
 use ton_types::UInt256;
@@ -134,6 +136,12 @@ pub struct TonBtcEventInitData {
     pub configuration: UInt256,
     #[abi(with = "address_only_hash")]
     pub staking: UInt256,
+}
+
+#[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
+pub struct TonBtcTransactions {
+    #[abi]
+    pub transactions: BTreeMap<UInt256, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]

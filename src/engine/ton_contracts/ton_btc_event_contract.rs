@@ -40,8 +40,19 @@ pub fn get_event_init_data() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new_responsible("getDetails")
             .abi_version(ton_abi::contract::ABI_VERSION_2_2)
-            .default_headers()
+            .time_header()
             .output("details", TonBtcEventInitData::param_type())
+            .build()
+    })
+}
+
+/// External responsible function
+pub fn get_transactions() -> &'static ton_abi::Function {
+    crate::once!(ton_abi::Function, || {
+        FunctionBuilder::new("transactions")
+            .abi_version(ton_abi::contract::ABI_VERSION_2_2)
+            .time_header()
+            .output("transactions", TonBtcTransactions::param_type())
             .build()
     })
 }
