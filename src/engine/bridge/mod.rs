@@ -850,7 +850,14 @@ impl Bridge {
             match event {
                 // Remove event if voting process was finished
                 (TonBtcEvent::Rejected, _)
-                | (_, EventStatus::Confirmed | EventStatus::Rejected) => remove_entry(),
+                | (_, EventStatus::Confirmed | EventStatus::Rejected) => {
+                    remove_entry();
+
+                    self.spawn_background_task(
+                        "remove TON->BTC withdrawals",
+                        self.clone().remove_ton_btc_withdrawals(account),
+                    );
+                }
                 // Handle event initialization
                 (TonBtcEvent::ReceiveRoundRelays { keys }, _) => {
                     // Check if event contains our key
@@ -862,6 +869,11 @@ impl Bridge {
                         );
                     } else {
                         remove_entry();
+
+                        self.spawn_background_task(
+                            "remove TON->BTC withdrawals",
+                            self.clone().remove_ton_btc_withdrawals(account),
+                        );
                     }
                 }
                 // Handle our confirmation or rejection
@@ -872,6 +884,17 @@ impl Bridge {
                     _,
                 ) if public_key == our_public_key => {
                     remove_entry();
+
+                    self.spawn_background_task(
+                        "remove TON->BTC withdrawals",
+                        self.clone().remove_ton_btc_withdrawals(account),
+                    );
+                }
+                (TonBtcEvent::Withdrawal { withdrawal }, EventStatus::Pending) => {
+                    self.spawn_background_task(
+                        "add TON->BTC withdrawal",
+                        self.clone().add_ton_btc_withdrawal(account, withdrawal),
+                    );
                 }
                 _ => { /* Ignore other events */ }
             }
@@ -933,12 +956,12 @@ impl Bridge {
         let contract = ton_subscriber.wait_contract_state(account).await?;
 
         match EventBaseContract(&contract).process(keystore.ton.public_key(), false, false)? {
-            EventAction::Nop => return Ok(()),
+            EventAction::Nop | EventAction::Commit => return Ok(()),
             EventAction::Remove => {
                 self.eth_ton_events_state.remove(&account);
                 return Ok(());
             }
-            EventAction::Vote | EventAction::Commit => { /* continue voting */ }
+            EventAction::Vote => { /* continue voting */ }
         }
 
         let event_init_data = EthTonEventContract(&contract).event_init_data()?;
@@ -1062,12 +1085,12 @@ impl Bridge {
 
         // Check further steps based on event statuses
         match base_event_contract.process(keystore.ton.public_key(), true, false)? {
-            EventAction::Nop => return Ok(()),
+            EventAction::Nop | EventAction::Commit => return Ok(()),
             EventAction::Remove => {
                 self.ton_eth_events_state.remove(&account);
                 return Ok(());
             }
-            EventAction::Vote | EventAction::Commit => { /* continue voting */ }
+            EventAction::Vote => { /* continue voting */ }
         }
         let round_number = base_event_contract.round_number()?;
 
@@ -1182,12 +1205,12 @@ impl Bridge {
         let contract = ton_subscriber.wait_contract_state(account).await?;
 
         match EventBaseContract(&contract).process(keystore.ton.public_key(), false, false)? {
-            EventAction::Nop => return Ok(()),
+            EventAction::Nop | EventAction::Commit => return Ok(()),
             EventAction::Remove => {
                 self.sol_ton_events_state.remove(&account);
                 return Ok(());
             }
-            EventAction::Vote | EventAction::Commit => { /* continue voting */ }
+            EventAction::Vote => { /* continue voting */ }
         }
 
         let event_init_data = SolTonEventContract(&contract).event_init_data()?;
@@ -1322,13 +1345,13 @@ impl Bridge {
         let base_event_contract = EventBaseContract(&contract);
 
         // Check further steps based on event statuses
-        match base_event_contract.process(keystore.ton.public_key(), true, false)? {
-            EventAction::Nop => return Ok(()),
+        match base_event_contract.process(keystore.ton.public_key(), false, false)? {
+            EventAction::Nop | EventAction::Commit => return Ok(()),
             EventAction::Remove => {
                 self.ton_sol_events_state.remove(&account);
                 return Ok(());
             }
-            EventAction::Vote | EventAction::Commit => { /* continue voting */ }
+            EventAction::Vote => { /* continue voting */ }
         }
         let round_number = base_event_contract.round_number()?;
 
@@ -1635,16 +1658,14 @@ impl Bridge {
         // Wait contract state
         let contract = ton_subscriber.wait_contract_state(account).await?;
 
-        let event_action =
-            EventBaseContract(&contract).process(keystore.ton.public_key(), false, true)?;
-        match event_action {
-            EventAction::Nop => return Ok(()),
+        match EventBaseContract(&contract).process(keystore.ton.public_key(), false, false)? {
+            EventAction::Nop | EventAction::Commit => return Ok(()),
             EventAction::Remove => {
                 self.btc_ton_events_state.remove(&account);
                 return Ok(());
             }
-            EventAction::Vote | EventAction::Commit => { /* continue voting */ }
-        }
+            EventAction::Vote => { /* continue voting */ }
+        };
 
         let event_init_data = BtcTonEventContract(&contract).event_init_data()?;
 
@@ -1695,80 +1716,229 @@ impl Bridge {
 
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
-        match event_action {
-            EventAction::Vote => {
-                // Verify BTC->TON event and create message to event contract
-                let message = match btc_subscriber
-                    .verify_btc_ton_event(
-                        account,
-                        blocks_to_confirm,
-                        deposit_account_id,
-                        event_init_data.vote_data,
-                    )
-                    .await
-                {
-                    // Confirm event if transaction was found
-                    Ok(VerificationStatus::Exists) => {
-                        UnsignedMessage::new(btc_ton_event_contract::confirm(), account)
-                            .arg(account_addr)
-                    }
-                    // Reject event if transaction not found
-                    Ok(VerificationStatus::NotExists { reason }) => {
-                        tracing::warn!(
-                            event = %DisplayAddr(account),
-                            configuration = %DisplayAddr(event_init_data.configuration),
-                            reason,
-                            "rejecting BTC->TON event",
-                        );
-
-                        UnsignedMessage::new(btc_ton_event_contract::reject(), account)
-                            .arg(account_addr)
-                    }
-                    // Skip event otherwise
-                    Err(e) => {
-                        tracing::error!(event = %DisplayAddr(account),"failed to verify BTC->TON event: {e:?}",);
-                        self.btc_ton_events_state.remove(&account);
-                        return Ok(());
-                    }
-                };
-
-                // Clone events observer and deliver message to the contract
-                let btc_ton_event_observer = match self.btc_ton_events_state.pending.get(&account) {
-                    Some(entry) => entry.observer.clone(),
-                    None => return Ok(()),
-                };
-                let btc_ton_events_state = Arc::downgrade(&self.btc_ton_events_state);
-
-                self.context
-                    .deliver_message(
-                        btc_ton_event_observer,
-                        message,
-                        // Stop voting for the contract if it was removed
-                        move || match btc_ton_events_state.upgrade() {
-                            Some(state) => state.pending.contains_key(&account),
-                            None => false,
-                        },
-                    )
-                    .await?;
+        // Verify BTC->TON event and create message to event contract
+        let message = match btc_subscriber
+            .verify_btc_ton_event(
+                account,
+                blocks_to_confirm,
+                deposit_account_id,
+                event_init_data.vote_data,
+            )
+            .await
+        {
+            // Confirm event if transaction was found
+            Ok(VerificationStatus::Exists) => {
+                UnsignedMessage::new(btc_ton_event_contract::confirm(), account).arg(account_addr)
             }
-            EventAction::Commit => {
-                if let Err(e) = btc_subscriber
-                    .commit(deposit_account_id, event_init_data.vote_data)
-                    .await
-                {
-                    tracing::error!(event = %DisplayAddr(account),"failed to commit BTC->TON event: {e:?}",);
-                }
+            // Reject event if transaction not found
+            Ok(VerificationStatus::NotExists { reason }) => {
+                tracing::warn!(
+                    event = %DisplayAddr(account),
+                    configuration = %DisplayAddr(event_init_data.configuration),
+                    reason,
+                    "rejecting BTC->TON event",
+                );
 
+                UnsignedMessage::new(btc_ton_event_contract::reject(), account).arg(account_addr)
+            }
+            // Skip event otherwise
+            Err(e) => {
+                tracing::error!(event = %DisplayAddr(account),"failed to verify BTC->TON event: {e:?}",);
                 self.btc_ton_events_state.remove(&account);
+                return Ok(());
             }
-            _ => {}
-        }
+        };
+
+        // Clone events observer and deliver message to the contract
+        let btc_ton_event_observer = match self.btc_ton_events_state.pending.get(&account) {
+            Some(entry) => entry.observer.clone(),
+            None => return Ok(()),
+        };
+        let btc_ton_events_state = Arc::downgrade(&self.btc_ton_events_state);
+
+        self.context
+            .deliver_message(
+                btc_ton_event_observer,
+                message,
+                // Stop voting for the contract if it was removed
+                move || match btc_ton_events_state.upgrade() {
+                    Some(state) => state.pending.contains_key(&account),
+                    None => false,
+                },
+            )
+            .await?;
 
         Ok(())
     }
 
-    async fn update_ton_btc_event(self: Arc<Self>, _account: UInt256) -> Result<()> {
-        todo!()
+    async fn commit_btc_ton_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let btc_subscriber = match &self.context.btc_subscriber {
+            Some(btc_subscriber) => btc_subscriber,
+            _ => return Ok(()),
+        };
+
+        let keystore = &self.context.keystore;
+        let ton_subscriber = &self.context.ton_subscriber;
+
+        // Wait contract state
+        let contract = ton_subscriber.wait_contract_state(account).await?;
+
+        match EventBaseContract(&contract).process(keystore.ton.public_key(), false, true)? {
+            EventAction::Nop | EventAction::Vote => return Ok(()),
+            EventAction::Remove => {
+                self.btc_ton_events_state.remove(&account);
+                return Ok(());
+            }
+            EventAction::Commit => { /* continue committing */ }
+        };
+
+        let event_init_data = BtcTonEventContract(&contract).event_init_data()?;
+
+        // Find suitable configuration
+        // NOTE: be sure to drop `self.state` lock before removing pending ton event.
+        // It may deadlock otherwise!
+        let data = {
+            let state = self.state.read().await;
+            state
+                .btc_ton_event_configurations
+                .get(&event_init_data.configuration)
+                .map(|configuration| configuration.details.network_configuration.proxy)
+        };
+
+        let proxy = match data {
+            // Decode event data with event abi from configuration
+            Some(proxy) => proxy,
+            // Do nothing when configuration was not found
+            None => {
+                tracing::error!(
+                    event = %DisplayAddr(account),
+                    configuration = %DisplayAddr(event_init_data.configuration),
+                    "BTC->TON event configuration not found for event",
+                );
+                self.btc_ton_events_state.remove(&account);
+                return Ok(());
+            }
+        };
+
+        // Get deposit account
+        let proxy_contract = ton_subscriber.wait_contract_state(proxy).await?;
+        let deposit = BtcProxyContract(&proxy_contract)
+            .get_deposit_account(&event_init_data.vote_data.beneficiary)?;
+
+        // Get deposit account id
+        let deposit_contract = ton_subscriber.wait_contract_state(deposit).await?;
+        let deposit_account_id = BtcDepositContract(&deposit_contract).get_account_id()?;
+
+        // Commit deposit
+        if let Err(e) = btc_subscriber
+            .commit(deposit_account_id, event_init_data.vote_data)
+            .await
+        {
+            tracing::error!(event = %DisplayAddr(account),"failed to commit BTC->TON event: {e:?}",);
+        }
+
+        // Remove subscription anyway
+        self.btc_ton_events_state.remove(&account);
+
+        Ok(())
+    }
+
+    async fn update_ton_btc_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let btc_subscriber = match &self.context.btc_subscriber {
+            // Continue only of BTC subscriber is enabled and it is the first time we started processing this event
+            Some(btc_subscriber) if self.btc_ton_events_state.start_processing(&account) => {
+                btc_subscriber
+            }
+            _ => return Ok(()),
+        };
+
+        let keystore = &self.context.keystore;
+        let ton_subscriber = &self.context.ton_subscriber;
+
+        // Wait contract state
+        let contract = ton_subscriber.wait_contract_state(account).await?;
+
+        let event_action =
+            EventBaseContract(&contract).process(keystore.ton.public_key(), true, false)?;
+        match event_action {
+            EventAction::Nop | EventAction::Commit => return Ok(()),
+            EventAction::Remove => {
+                self.btc_ton_events_state.remove(&account);
+                return Ok(());
+            }
+            EventAction::Vote => { /* continue voting */ }
+        }
+
+        let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
+
+        // Get BTC transaction
+        let message = match btc_subscriber.create_btc_transaction(account).await {
+            Ok(transaction) => UnsignedMessage::new(ton_btc_event_contract::confirm(), account)
+                .arg(bitcoin::consensus::serialize(&transaction))
+                .arg(account_addr),
+            // Skip event otherwise
+            Err(e) => {
+                tracing::error!(event = %DisplayAddr(account),"failed to create BTC transaction: {e:?}",);
+                self.ton_btc_events_state.remove(&account);
+                return Ok(());
+            }
+        };
+
+        // Clone events observer and deliver message to the contract
+        let ton_btc_event_observer = match self.ton_btc_events_state.pending.get(&account) {
+            Some(entry) => entry.observer.clone(),
+            None => return Ok(()),
+        };
+        let ton_btc_events_state = Arc::downgrade(&self.ton_btc_events_state);
+
+        self.context
+            .deliver_message(
+                ton_btc_event_observer,
+                message,
+                // Stop voting for the contract if it was removed
+                move || match ton_btc_events_state.upgrade() {
+                    Some(state) => state.pending.contains_key(&account),
+                    None => false,
+                },
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn commit_ton_btc_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        Ok(())
+    }
+
+    async fn add_ton_btc_withdrawal(
+        self: Arc<Self>,
+        account: UInt256,
+        withdrawal: BtcWithdrawal,
+    ) -> Result<()> {
+        let btc_subscriber = match &self.context.btc_subscriber {
+            Some(btc_subscriber) => btc_subscriber,
+            _ => return Ok(()),
+        };
+
+        let id = bitcoin::PublicKey::from_slice(&withdrawal.recipient)
+            .map(|pk| bitcoin::Script::new_p2pk(&pk))?;
+
+        btc_subscriber
+            .add_pending_withdrawal(account, id, withdrawal.amount)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn remove_ton_btc_withdrawals(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let btc_subscriber = match &self.context.btc_subscriber {
+            Some(btc_subscriber) => btc_subscriber,
+            _ => return Ok(()),
+        };
+
+        btc_subscriber.remove_pending_withdrawals(account).await?;
+
+        Ok(())
     }
 
     async fn check_connector_contract(&self, connector_account: UInt256) -> Result<()> {
@@ -2510,127 +2680,166 @@ impl Bridge {
                 match EventBaseContract(&contract).process(
                     our_public_key,
                     *event_type == EventType::TonEth,
-                    *event_type == EventType::BtcTon,
+                    *event_type == EventType::BtcTon || *event_type == EventType::TonBtc,
                 ) {
-                    Ok(EventAction::Nop | EventAction::Vote | EventAction::Commit) => {
-                        match event_type {
-                            EventType::EthTon => {
-                                let configuration = check_configuration!(EthTonEventContract);
+                    Ok(EventAction::Nop | EventAction::Vote) => match event_type {
+                        EventType::EthTon => {
+                            let configuration = check_configuration!(EthTonEventContract);
 
-                                if !unique_eth_ton_event_configurations.contains(&configuration) {
-                                    tracing::warn!(
-                                        event = %DisplayAddr(hash),
-                                        configuration = %DisplayAddr(configuration),
-                                        "ETH->TON event configuration not found"
-                                    );
-                                    return Ok(true);
-                                }
-
-                                if bridge.add_pending_event(hash, &bridge.eth_ton_events_state) {
-                                    bridge.spawn_background_task(
-                                        "initial update ETH->TON event",
-                                        bridge.clone().update_eth_ton_event(hash),
-                                    );
-                                }
+                            if !unique_eth_ton_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "ETH->TON event configuration not found"
+                                );
+                                return Ok(true);
                             }
-                            EventType::TonEth => {
-                                let configuration = check_configuration!(TonEthEventContract);
 
-                                if !unique_ton_eth_event_configurations.contains(&configuration) {
-                                    tracing::warn!(
-                                        event = %DisplayAddr(hash),
-                                        configuration = %DisplayAddr(configuration),
-                                        "TON->ETH event configuration not found",
-                                    );
-                                    return Ok(true);
-                                }
-
-                                if bridge.add_pending_event(hash, &bridge.ton_eth_events_state) {
-                                    bridge.spawn_background_task(
-                                        "initial update TON->ETH event",
-                                        bridge.clone().update_ton_eth_event(hash),
-                                    );
-                                }
+                            if bridge.add_pending_event(hash, &bridge.eth_ton_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial update ETH->TON event",
+                                    bridge.clone().update_eth_ton_event(hash),
+                                );
                             }
-                            EventType::SolTon if has_sol_subscriber => {
-                                let configuration = check_configuration!(SolTonEventContract);
-
-                                if !unique_sol_ton_event_configurations.contains(&configuration) {
-                                    tracing::warn!(
-                                        event = %DisplayAddr(hash),
-                                        configuration = %DisplayAddr(configuration),
-                                        "SOL->TON event configuration not found",
-                                    );
-                                    return Ok(true);
-                                }
-
-                                if bridge.add_pending_event(hash, &bridge.sol_ton_events_state) {
-                                    bridge.spawn_background_task(
-                                        "initial update SOL->TON event",
-                                        bridge.clone().update_sol_ton_event(hash),
-                                    );
-                                }
-                            }
-                            EventType::TonSol if has_sol_subscriber => {
-                                let configuration = check_configuration!(TonSolEventContract);
-
-                                if !unique_ton_sol_event_configurations.contains(&configuration) {
-                                    tracing::warn!(
-                                        event = %DisplayAddr(hash),
-                                        configuration = %DisplayAddr(configuration),
-                                        "TON->SOL event configuration not found",
-                                    );
-                                    return Ok(true);
-                                }
-
-                                if bridge.add_pending_event(hash, &bridge.ton_sol_events_state) {
-                                    bridge.spawn_background_task(
-                                        "initial update TON->SOL event",
-                                        bridge.clone().update_ton_sol_event(hash),
-                                    );
-                                }
-                            }
-                            EventType::BtcTon if has_btc_subscriber => {
-                                let configuration = check_configuration!(BtcTonEventContract);
-
-                                if !unique_btc_ton_event_configurations.contains(&configuration) {
-                                    tracing::warn!(
-                                        event = %DisplayAddr(hash),
-                                        configuration = %DisplayAddr(configuration),
-                                        "BTC->TON event configuration not found"
-                                    );
-                                    return Ok(true);
-                                }
-
-                                if bridge.add_pending_event(hash, &bridge.btc_ton_events_state) {
-                                    bridge.spawn_background_task(
-                                        "initial update BTC->TON event",
-                                        bridge.clone().update_btc_ton_event(hash),
-                                    );
-                                }
-                            }
-                            EventType::TonBtc if has_btc_subscriber => {
-                                let configuration = check_configuration!(TonBtcEventContract);
-
-                                if !unique_ton_btc_event_configurations.contains(&configuration) {
-                                    tracing::warn!(
-                                        event = %DisplayAddr(hash),
-                                        configuration = %DisplayAddr(configuration),
-                                        "TON->BTC event configuration not found"
-                                    );
-                                    return Ok(true);
-                                }
-
-                                if bridge.add_pending_event(hash, &bridge.ton_btc_events_state) {
-                                    bridge.spawn_background_task(
-                                        "initial update BTC->TON event",
-                                        bridge.clone().update_ton_btc_event(hash),
-                                    );
-                                }
-                            }
-                            _ => {}
                         }
-                    }
+                        EventType::TonEth => {
+                            let configuration = check_configuration!(TonEthEventContract);
+
+                            if !unique_ton_eth_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "TON->ETH event configuration not found",
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.ton_eth_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial update TON->ETH event",
+                                    bridge.clone().update_ton_eth_event(hash),
+                                );
+                            }
+                        }
+                        EventType::SolTon if has_sol_subscriber => {
+                            let configuration = check_configuration!(SolTonEventContract);
+
+                            if !unique_sol_ton_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "SOL->TON event configuration not found",
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.sol_ton_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial update SOL->TON event",
+                                    bridge.clone().update_sol_ton_event(hash),
+                                );
+                            }
+                        }
+                        EventType::TonSol if has_sol_subscriber => {
+                            let configuration = check_configuration!(TonSolEventContract);
+
+                            if !unique_ton_sol_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "TON->SOL event configuration not found",
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.ton_sol_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial update TON->SOL event",
+                                    bridge.clone().update_ton_sol_event(hash),
+                                );
+                            }
+                        }
+                        EventType::BtcTon if has_btc_subscriber => {
+                            let configuration = check_configuration!(BtcTonEventContract);
+
+                            if !unique_btc_ton_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "BTC->TON event configuration not found"
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.btc_ton_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial update BTC->TON event",
+                                    bridge.clone().update_btc_ton_event(hash),
+                                );
+                            }
+                        }
+                        EventType::TonBtc if has_btc_subscriber => {
+                            let configuration = check_configuration!(TonBtcEventContract);
+
+                            if !unique_ton_btc_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "TON->BTC event configuration not found"
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.ton_btc_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial update BTC->TON event",
+                                    bridge.clone().update_ton_btc_event(hash),
+                                );
+                            }
+                        }
+                        _ => {}
+                    },
+                    Ok(EventAction::Commit) => match event_type {
+                        EventType::BtcTon => {
+                            let configuration = check_configuration!(BtcTonEventContract);
+
+                            if !unique_btc_ton_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "BTC->TON event configuration not found"
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.btc_ton_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial commit BTC->TON event",
+                                    bridge.clone().commit_btc_ton_event(hash),
+                                );
+                            }
+                        }
+                        EventType::TonBtc => {
+                            let configuration = check_configuration!(TonBtcEventContract);
+
+                            if !unique_ton_btc_event_configurations.contains(&configuration) {
+                                tracing::warn!(
+                                    event = %DisplayAddr(hash),
+                                    configuration = %DisplayAddr(configuration),
+                                    "TON->BTC event configuration not found"
+                                );
+                                return Ok(true);
+                            }
+
+                            if bridge.add_pending_event(hash, &bridge.btc_ton_events_state) {
+                                bridge.spawn_background_task(
+                                    "initial commit TON->BTC event",
+                                    bridge.clone().commit_ton_btc_event(hash),
+                                );
+                            }
+                        }
+                        _ => {}
+                    },
                     Ok(EventAction::Remove) => { /* do nothing */ }
                     Err(e) => {
                         tracing::error!(
@@ -3017,7 +3226,7 @@ impl EventExt for SolTonEvent {
 
 #[async_trait::async_trait]
 impl EventExt for TonSolEvent {
-    const REQUIRE_ALL_SIGNATURES: bool = true;
+    const REQUIRE_ALL_SIGNATURES: bool = false;
     const REQUIRE_COMMIT: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
@@ -3037,7 +3246,7 @@ impl EventExt for BtcTonEvent {
 
 #[async_trait::async_trait]
 impl EventExt for TonBtcEvent {
-    const REQUIRE_ALL_SIGNATURES: bool = false;
+    const REQUIRE_ALL_SIGNATURES: bool = true;
     const REQUIRE_COMMIT: bool = true;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
@@ -3214,7 +3423,7 @@ impl EventBaseContract<'_> {
             {
                 EventAction::Vote
             }
-            // Special case for BTC->TON event to commit UTXO in db
+            // Special case for BTC->TON & TON-> BTC events to commit UTXO in cache when relay sync
             EventStatus::Confirmed if require_commit => EventAction::Commit,
             // Discard event in other cases
             _ => EventAction::Remove,
@@ -3885,21 +4094,11 @@ impl ReadFromTransaction for BtcTonEvent {
 
 #[derive(Debug, Clone)]
 enum TonBtcEvent {
-    ReceiveRoundRelays {
-        keys: Vec<UInt256>,
-    },
-    Confirm {
-        public_key: UInt256,
-    },
-    Reject {
-        public_key: UInt256,
-    },
-    Cancel {
-        public_key: UInt256,
-    },
-    Withdrawals {
-        withdrawals: Vec<(bitcoin::Script, u64)>,
-    },
+    ReceiveRoundRelays { keys: Vec<UInt256> },
+    Confirm { public_key: UInt256 },
+    Reject { public_key: UInt256 },
+    Cancel { public_key: UInt256 },
+    Withdrawal { withdrawal: BtcWithdrawal },
     Rejected,
     Closed,
 }
@@ -3941,20 +4140,10 @@ impl ReadFromTransaction for TonBtcEvent {
                         Some(TonBtcEvent::ReceiveRoundRelays { keys: items })
                     }
                     _ => {
-                        let events = ctx.find_withdrawals();
-                        let withdrawals = events
-                            .into_iter()
-                            .map(|w| {
-                                (
-                                    bitcoin::PublicKey::from_slice(&w.recipient)
-                                        .map(|pk| bitcoin::Script::new_p2pk(&pk))
-                                        .trust_me(),
-                                    w.amount,
-                                )
-                            })
-                            .collect();
-
-                        Some(Self::Withdrawals { withdrawals })
+                        let withdrawals = ctx.find_withdrawals();
+                        Some(Self::Withdrawal {
+                            withdrawal: withdrawals.into_iter().next()?,
+                        })
                     }
                 }
             }

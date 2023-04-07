@@ -27,8 +27,9 @@ pub struct BtcSubscriber {
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
     address_tracker: Arc<tracker::AddressTracker>,
-    utxo_balances: parking_lot::RwLock<BTreeSet<BtcBalance>>,
+    utxo_balances: tokio::sync::Mutex<BTreeSet<BtcBalance>>,
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
+    pending_withdrawals: tokio::sync::Mutex<FxHashMap<UInt256, Vec<(Script, u64)>>>,
     pending_event_count: AtomicUsize,
     new_events_notify: Notify,
 }
@@ -47,6 +48,7 @@ impl BtcSubscriber {
             pool,
             rpc_client,
             address_tracker,
+            pending_withdrawals: Default::default(),
             utxo_balances: Default::default(),
             pending_events: Default::default(),
             pending_event_count: Default::default(),
@@ -131,13 +133,47 @@ impl BtcSubscriber {
         let status = rx.await?;
 
         if let VerificationStatus::Exists = status {
-            self.utxo_balances.write().insert(BtcBalance {
+            let mut utxo_balances = self.utxo_balances.lock().await;
+            utxo_balances.insert(BtcBalance {
                 id: btc_receiver,
                 balance: vote_data.amount,
             });
         }
 
         Ok(status)
+    }
+
+    pub async fn create_btc_transaction(
+        &self,
+        account: UInt256,
+    ) -> Result<transaction::Transaction> {
+        todo!()
+    }
+
+    pub async fn add_pending_withdrawal(
+        &self,
+        account: UInt256,
+        id: Script,
+        value: u64,
+    ) -> Result<()> {
+        let mut withdrawal = self.pending_withdrawals.lock().await;
+        match withdrawal.entry(account) {
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(vec![(id, value)]);
+            }
+            hash_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().push((id, value));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn remove_pending_withdrawals(&self, account: UInt256) -> Result<()> {
+        let mut withdrawal = self.pending_withdrawals.lock().await;
+        withdrawal.remove(&account);
+
+        Ok(())
     }
 
     pub async fn commit(
@@ -152,10 +188,23 @@ impl BtcSubscriber {
             .address_tracker
             .generate_script_pubkey(master_xpub, deposit_account_id)?;
 
-        self.utxo_balances.write().insert(BtcBalance {
+        let mut utxo_balances = self.utxo_balances.lock().await;
+        utxo_balances.insert(BtcBalance {
             id: btc_receiver,
             balance: vote_data.amount,
         });
+
+        Ok(())
+    }
+
+    pub async fn remove(&self, tx: transaction::Transaction) -> Result<()> {
+        let mut utxo_balances = self.utxo_balances.lock().await;
+        for out in tx.output {
+            utxo_balances.remove(&BtcBalance {
+                id: out.script_pubkey,
+                balance: out.value,
+            });
+        }
 
         Ok(())
     }
