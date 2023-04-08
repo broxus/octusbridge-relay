@@ -1678,21 +1678,16 @@ impl Bridge {
                 .btc_ton_event_configurations
                 .get(&event_init_data.configuration)
                 .map(|configuration| {
-                    (
-                        configuration.details.network_configuration.proxy,
-                        configuration
-                            .details
-                            .network_configuration
-                            .event_blocks_to_confirm,
-                    )
+                    configuration
+                        .details
+                        .network_configuration
+                        .event_blocks_to_confirm
                 })
         };
 
-        let (proxy, blocks_to_confirm) = match data {
-            // Decode event data with event abi from configuration
-            Some((proxy, blocks_to_confirm)) =>
-                (proxy, blocks_to_confirm)
-            ,
+        let blocks_to_confirm = match data {
+            // Decode blocks_to_confirm from configuration
+            Some(blocks_to_confirm) => blocks_to_confirm,
             // Do nothing when configuration was not found
             None => {
                 tracing::error!(
@@ -1705,25 +1700,11 @@ impl Bridge {
             }
         };
 
-        // Get deposit account
-        let proxy_contract = ton_subscriber.wait_contract_state(proxy).await?;
-        let deposit = BtcProxyContract(&proxy_contract)
-            .get_deposit_account(&event_init_data.vote_data.beneficiary)?;
-
-        // Get deposit account id
-        let deposit_contract = ton_subscriber.wait_contract_state(deposit).await?;
-        let deposit_account_id = BtcDepositContract(&deposit_contract).get_account_id()?;
-
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
         // Verify BTC->TON event and create message to event contract
         let message = match btc_subscriber
-            .verify_btc_ton_event(
-                account,
-                blocks_to_confirm,
-                deposit_account_id,
-                event_init_data.vote_data,
-            )
+            .verify_btc_ton_event(account, blocks_to_confirm, event_init_data.vote_data)
             .await
         {
             // Confirm event if transaction was found
@@ -1794,44 +1775,9 @@ impl Bridge {
 
         let event_init_data = BtcTonEventContract(&contract).event_init_data()?;
 
-        // Find suitable configuration
-        // NOTE: be sure to drop `self.state` lock before removing pending ton event.
-        // It may deadlock otherwise!
-        let data = {
-            let state = self.state.read().await;
-            state
-                .btc_ton_event_configurations
-                .get(&event_init_data.configuration)
-                .map(|configuration| configuration.details.network_configuration.proxy)
-        };
-
-        let proxy = match data {
-            // Decode event data with event abi from configuration
-            Some(proxy) => proxy,
-            // Do nothing when configuration was not found
-            None => {
-                tracing::error!(
-                    event = %DisplayAddr(account),
-                    configuration = %DisplayAddr(event_init_data.configuration),
-                    "BTC->TON event configuration not found for event",
-                );
-                self.btc_ton_events_state.remove(&account);
-                return Ok(());
-            }
-        };
-
-        // Get deposit account
-        let proxy_contract = ton_subscriber.wait_contract_state(proxy).await?;
-        let deposit = BtcProxyContract(&proxy_contract)
-            .get_deposit_account(&event_init_data.vote_data.beneficiary)?;
-
-        // Get deposit account id
-        let deposit_contract = ton_subscriber.wait_contract_state(deposit).await?;
-        let deposit_account_id = BtcDepositContract(&deposit_contract).get_account_id()?;
-
         // Commit deposit
         if let Err(e) = btc_subscriber
-            .commit_btc_ton(deposit_account_id, event_init_data.vote_data)
+            .commit_btc_ton(event_init_data.vote_data)
             .await
         {
             tracing::error!(event = %DisplayAddr(account),"failed to commit BTC->TON event: {e:?}",);

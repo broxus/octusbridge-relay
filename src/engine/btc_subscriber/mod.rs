@@ -1,5 +1,4 @@
-use std::collections::{hash_map, BTreeSet};
-use std::str::FromStr;
+use std::collections::hash_map;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +7,7 @@ use anyhow::Result;
 use bitcoin::blockdata::transaction;
 use bitcoin::hash_types::Txid;
 use bitcoin::hashes::Hash;
-use bitcoin::{BlockHash, Script, TxOut};
+use bitcoin::{BlockHash, OutPoint, PackedLockTime, Script, Witness};
 use esplora_client::Builder;
 use futures_util::StreamExt;
 use rustc_hash::FxHashMap;
@@ -20,14 +19,11 @@ use crate::engine::bridge::*;
 use crate::engine::ton_contracts::BtcTonEventVoteData;
 use crate::utils::*;
 
-pub mod tracker;
-
 pub struct BtcSubscriber {
     config: BtcConfig,
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
-    address_tracker: Arc<tracker::AddressTracker>,
-    utxo_balances: tokio::sync::Mutex<BTreeSet<BtcBalance>>,
+    in_utxos: tokio::sync::Mutex<FxHashMap<Utxo, u64>>,
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
     pending_withdrawals: tokio::sync::Mutex<FxHashMap<UInt256, Vec<(Script, u64)>>>,
     pending_event_count: AtomicUsize,
@@ -39,18 +35,15 @@ impl BtcSubscriber {
         let builder = Builder::new(&config.esplora_url);
         let rpc_client = Arc::new(builder.build_async()?);
 
-        let address_tracker = Arc::new(tracker::AddressTracker::new(&config.bkp_public_keys)?);
-
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
         let subscriber = Arc::new(Self {
             config,
             pool,
             rpc_client,
-            address_tracker,
-            pending_withdrawals: Default::default(),
-            utxo_balances: Default::default(),
+            in_utxos: Default::default(),
             pending_events: Default::default(),
+            pending_withdrawals: Default::default(),
             pending_event_count: Default::default(),
             new_events_notify: Notify::new(),
         });
@@ -85,15 +78,9 @@ impl BtcSubscriber {
         &self,
         account: UInt256,
         blocks_to_confirm: u16,
-        deposit_account_id: u32,
         vote_data: BtcTonEventVoteData,
     ) -> Result<VerificationStatus> {
-        // TODO: get TSS pubkey from everscale-network
-        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
-
-        let btc_receiver = self
-            .address_tracker
-            .generate_script_pubkey(master_xpub, deposit_account_id)?;
+        let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
 
         let rx = {
             let mut pending_events = self.pending_events.lock().await;
@@ -101,7 +88,6 @@ impl BtcSubscriber {
             let (tx, rx) = oneshot::channel();
 
             let block_hash = BlockHash::from_slice(vote_data.event_block.as_array())?;
-            let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
 
             let target_block = vote_data.block_number + blocks_to_confirm as u32;
 
@@ -109,8 +95,8 @@ impl BtcSubscriber {
                 tx_id,
                 block_hash,
                 amount: vote_data.amount,
-                btc_receiver: btc_receiver.clone(),
                 block_height: vote_data.block_number,
+                output_index: vote_data.output_index,
             };
 
             pending_events.insert(
@@ -133,11 +119,14 @@ impl BtcSubscriber {
         let status = rx.await?;
 
         if let VerificationStatus::Exists = status {
-            let mut utxo_balances = self.utxo_balances.lock().await;
-            utxo_balances.insert(BtcBalance {
-                id: btc_receiver,
-                balance: vote_data.amount,
-            });
+            let mut in_utxos = self.in_utxos.lock().await;
+            in_utxos.insert(
+                Utxo {
+                    tx_id,
+                    vout: vote_data.output_index,
+                },
+                vote_data.amount,
+            );
         }
 
         Ok(status)
@@ -147,26 +136,82 @@ impl BtcSubscriber {
         &self,
         account: UInt256,
     ) -> Result<transaction::Transaction> {
-        todo!()
+        let withdrawals = self
+            .pending_withdrawals
+            .lock()
+            .await
+            .get(&account)
+            .ok_or(BtcSubscriberError::WithdrawalsNotFound(
+                account.to_hex_string(),
+            ))?
+            .clone();
+
+        let in_utxos = self.in_utxos.lock().await;
+
+        // Sort UTXO by balance
+        let mut in_utxos_vec: Vec<(&Utxo, &u64)> = in_utxos.iter().collect();
+        in_utxos_vec.sort_by(|a, b| b.1.cmp(a.1));
+
+        // Min amount to spend
+        let amount_to_spend = withdrawals.iter().fold(0u64, |amount, (_, v)| amount + v);
+
+        // Get list of UTXO to spend
+        let mut sum = 0;
+        let mut utxos = vec![];
+        for (utxo, value) in in_utxos_vec {
+            utxos.push(utxo.clone());
+            sum += value;
+
+            if sum >= amount_to_spend {
+                break;
+            }
+        }
+
+        // Get inputs
+        let input = utxos
+            .into_iter()
+            .map(|utxo| transaction::TxIn {
+                previous_output: OutPoint {
+                    txid: utxo.tx_id,
+                    vout: utxo.vout,
+                },
+                script_sig: Script::new(),
+                witness: Witness::default(),
+                sequence: transaction::Sequence::default(),
+            })
+            .collect();
+
+        // Get outputs
+        let output = withdrawals
+            .into_iter()
+            .map(|(script_pubkey, value)| transaction::TxOut {
+                value,
+                script_pubkey,
+            })
+            .collect();
+
+        // Get transaction
+        let tx = transaction::Transaction {
+            version: 1,
+            lock_time: PackedLockTime::ZERO,
+            input,
+            output,
+        };
+
+        Ok(tx)
     }
 
-    pub async fn commit_btc_ton(
-        &self,
-        deposit_account_id: u32,
-        vote_data: BtcTonEventVoteData,
-    ) -> Result<()> {
-        // TODO: get TSS pubkey from everscale-network
-        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
+    pub async fn commit_btc_ton(&self, vote_data: BtcTonEventVoteData) -> Result<()> {
+        let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
 
-        let btc_receiver = self
-            .address_tracker
-            .generate_script_pubkey(master_xpub, deposit_account_id)?;
-
-        let mut utxo_balances = self.utxo_balances.lock().await;
-        utxo_balances.insert(BtcBalance {
-            id: btc_receiver,
-            balance: vote_data.amount,
-        });
+        let mut in_utxos = self.in_utxos.lock().await;
+        in_utxos.insert(
+            Utxo {
+                tx_id,
+                vout: vote_data.output_index,
+            },
+            vote_data.amount,
+        );
 
         Ok(())
     }
@@ -174,11 +219,11 @@ impl BtcSubscriber {
     pub async fn commit_ton_btc(&self, tx: &[u8]) -> Result<()> {
         let tx: transaction::Transaction = bitcoin::consensus::deserialize(tx)?;
 
-        let mut utxo_balances = self.utxo_balances.lock().await;
-        for out in tx.output {
-            utxo_balances.remove(&BtcBalance {
-                id: out.script_pubkey,
-                balance: out.value,
+        let mut in_utxos = self.in_utxos.lock().await;
+        for tx_in in tx.input {
+            in_utxos.remove(&Utxo {
+                tx_id: tx_in.previous_output.txid,
+                vout: tx_in.previous_output.vout,
             });
         }
 
@@ -432,13 +477,11 @@ impl PendingEvent {
                 event_data.block_height,
                 tx_data.tx_status.block_height.unwrap_or_default()
             ))
-        } else if !tx_data.tx.output.contains(&TxOut {
-            value: event_data.amount,
-            script_pubkey: event_data.btc_receiver.clone(),
-        }) {
+        } else if tx_data.tx.txid() != event_data.tx_id {
             Err(format!(
-                "UTXO not found: amount - {}, receiver - {}",
-                event_data.amount, event_data.btc_receiver
+                "Tx Id mismatch. From event: {}. Expected: {}",
+                event_data.tx_id,
+                tx_data.tx.txid(),
             ))
         } else {
             Ok(())
@@ -455,9 +498,9 @@ impl PendingEvent {
 pub struct BtcTonEventData {
     pub tx_id: Txid,
     pub amount: u64,
+    pub output_index: u32,
     pub block_height: u32,
     pub block_hash: BlockHash,
-    pub btc_receiver: Script,
 }
 
 #[derive(Debug, Clone)]
@@ -466,37 +509,21 @@ pub struct BtcTransactionData {
     pub tx_status: esplora_client::TxStatus,
 }
 
-#[derive(Debug, Clone, Eq)]
-struct BtcBalance {
-    id: Script,
-    balance: u64,
-}
-
-impl Ord for BtcBalance {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.balance.cmp(&self.balance).reverse()
-    }
-}
-
-impl PartialOrd for BtcBalance {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for BtcBalance {
-    fn eq(&self, other: &Self) -> bool {
-        self.balance == other.balance
-    }
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct Utxo {
+    /// The referenced transaction's txid.
+    tx_id: Txid,
+    /// The index of the referenced output in its transaction's vout.
+    vout: u32,
 }
 
 type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
 
-/*#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 enum BtcSubscriberError {
-    #[error("BTC transaction `{0}` not found")]
-    TransactionNotFound(String),
-}*/
+    #[error("BTC withdrawals `{0}` not found")]
+    WithdrawalsNotFound(String),
+}
 
 // Iteration
 /*
