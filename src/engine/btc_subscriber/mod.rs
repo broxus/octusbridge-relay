@@ -1,4 +1,5 @@
 use std::collections::hash_map;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,6 +7,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bitcoin::blockdata::transaction;
 use bitcoin::hash_types::Txid;
+use bitcoin::hashes::hex::ToHex;
 use bitcoin::hashes::Hash;
 use bitcoin::{BlockHash, OutPoint, PackedLockTime, Script, Witness};
 use esplora_client::Builder;
@@ -19,10 +21,13 @@ use crate::engine::bridge::*;
 use crate::engine::ton_contracts::BtcTonEventVoteData;
 use crate::utils::*;
 
+pub mod tracker;
+
 pub struct BtcSubscriber {
     config: BtcConfig,
     pool: Arc<Semaphore>,
     rpc_client: Arc<esplora_client::AsyncClient>,
+    address_tracker: Arc<tracker::AddressTracker>,
     in_utxos: tokio::sync::Mutex<FxHashMap<Utxo, u64>>,
     pending_events: tokio::sync::Mutex<FxHashMap<UInt256, PendingEvent>>,
     pending_withdrawals: tokio::sync::Mutex<FxHashMap<UInt256, Vec<(Script, u64)>>>,
@@ -37,10 +42,13 @@ impl BtcSubscriber {
 
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
+        let address_tracker = Arc::new(tracker::AddressTracker::new(&config.bkp_public_keys)?);
+
         let subscriber = Arc::new(Self {
             config,
             pool,
             rpc_client,
+            address_tracker,
             in_utxos: Default::default(),
             pending_events: Default::default(),
             pending_withdrawals: Default::default(),
@@ -78,6 +86,7 @@ impl BtcSubscriber {
         &self,
         account: UInt256,
         blocks_to_confirm: u16,
+        deposit_account_id: u32,
         vote_data: BtcTonEventVoteData,
     ) -> Result<VerificationStatus> {
         let tx_id = Txid::from_hash(Hash::from_slice(vote_data.transaction.as_array())?);
@@ -91,9 +100,17 @@ impl BtcSubscriber {
 
             let target_block = vote_data.block_number + blocks_to_confirm as u32;
 
+            // TODO: get TSS pubkey from everscale-network
+            let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
+
+            let btc_receiver = self
+                .address_tracker
+                .generate_script_pubkey(master_xpub, deposit_account_id)?;
+
             let event_data = BtcTonEventData {
                 tx_id,
                 block_hash,
+                btc_receiver,
                 amount: vote_data.amount,
                 block_height: vote_data.block_number,
                 output_index: vote_data.output_index,
@@ -508,6 +525,15 @@ impl PendingEvent {
                 event_data.tx_id,
                 tx_data.tx.txid(),
             ))
+        } else if !tx_data.tx.output.contains(&transaction::TxOut {
+            value: event_data.amount,
+            script_pubkey: event_data.btc_receiver.clone(),
+        }) {
+            Err(format!(
+                "Btc receiver mismatch. Output where address - {} and amount - {} not found.",
+                event_data.btc_receiver.to_hex(),
+                event_data.amount,
+            ))
         } else {
             Ok(())
         };
@@ -525,6 +551,7 @@ pub struct BtcTonEventData {
     pub amount: u64,
     pub output_index: u32,
     pub block_height: u32,
+    pub btc_receiver: Script,
     pub block_hash: BlockHash,
 }
 
