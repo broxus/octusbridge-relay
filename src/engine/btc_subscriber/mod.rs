@@ -578,13 +578,3 @@ enum BtcSubscriberError {
     #[error("Insufficient BTC balance to make withdrawal")]
     InsufficientBalance,
 }
-
-// Iteration
-/*
-let mut iter = self
-            .db
-            .utxo_balance_storage()
-            .balances_iterator()
-            .peekable();
-        while let Some((id, balance)) = iter.next() {}
-*/

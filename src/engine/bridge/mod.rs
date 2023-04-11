@@ -405,13 +405,15 @@ impl Bridge {
     ) -> Result<()> {
         match event {
             // Create observer on each deployment event
-            SolTonEventConfigurationEvent::EventDeployed { address } => {
-                if self.add_pending_event(address, &self.sol_ton_events_state) {
-                    let this = self.clone();
-                    self.spawn_background_task("preprocess SOL->TON event", async move {
-                        this.preprocess_event(address, &this.sol_ton_events_state)
-                            .await
-                    });
+            SolTonEventConfigurationEvent::EventsDeployed { events } => {
+                for address in events {
+                    if self.add_pending_event(address, &self.sol_ton_events_state) {
+                        let this = self.clone();
+                        self.spawn_background_task("preprocess SOL->TON event", async move {
+                            this.preprocess_event(address, &this.sol_ton_events_state)
+                                .await
+                        });
+                    }
                 }
             }
             // Update configuration state
@@ -1771,43 +1773,6 @@ impl Bridge {
         Ok(())
     }
 
-    async fn commit_btc_ton_event(self: Arc<Self>, account: UInt256) -> Result<()> {
-        let btc_subscriber = match &self.context.btc_subscriber {
-            Some(btc_subscriber) => btc_subscriber,
-            _ => return Ok(()),
-        };
-
-        let keystore = &self.context.keystore;
-        let ton_subscriber = &self.context.ton_subscriber;
-
-        // Wait contract state
-        let contract = ton_subscriber.wait_contract_state(account).await?;
-
-        match EventBaseContract(&contract).process(keystore.ton.public_key(), false, true)? {
-            EventAction::Nop | EventAction::Vote => return Ok(()),
-            EventAction::Remove => {
-                self.btc_ton_events_state.remove(&account);
-                return Ok(());
-            }
-            EventAction::Commit => { /* continue committing */ }
-        };
-
-        let event_init_data = BtcTonEventContract(&contract).event_init_data()?;
-
-        // Commit deposit
-        if let Err(e) = btc_subscriber
-            .commit_btc_ton(event_init_data.vote_data)
-            .await
-        {
-            tracing::error!(event = %DisplayAddr(account),"failed to commit BTC->TON event: {e:?}",);
-        }
-
-        // Remove subscription anyway
-        self.btc_ton_events_state.remove(&account);
-
-        Ok(())
-    }
-
     async fn update_ton_btc_event(self: Arc<Self>, account: UInt256) -> Result<()> {
         let btc_subscriber = match &self.context.btc_subscriber {
             // Continue only of BTC subscriber is enabled and it is the first time we started processing this event
@@ -1867,6 +1832,43 @@ impl Bridge {
                 },
             )
             .await?;
+
+        Ok(())
+    }
+
+    async fn commit_btc_ton_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let btc_subscriber = match &self.context.btc_subscriber {
+            Some(btc_subscriber) => btc_subscriber,
+            _ => return Ok(()),
+        };
+
+        let keystore = &self.context.keystore;
+        let ton_subscriber = &self.context.ton_subscriber;
+
+        // Wait contract state
+        let contract = ton_subscriber.wait_contract_state(account).await?;
+
+        match EventBaseContract(&contract).process(keystore.ton.public_key(), false, true)? {
+            EventAction::Nop | EventAction::Vote => return Ok(()),
+            EventAction::Remove => {
+                self.btc_ton_events_state.remove(&account);
+                return Ok(());
+            }
+            EventAction::Commit => { /* continue committing */ }
+        };
+
+        let event_init_data = BtcTonEventContract(&contract).event_init_data()?;
+
+        // Commit deposit
+        if let Err(e) = btc_subscriber
+            .commit_btc_ton(event_init_data.vote_data)
+            .await
+        {
+            tracing::error!(event = %DisplayAddr(account),"failed to commit BTC->TON event: {e:?}",);
+        }
+
+        // Remove subscription anyway
+        self.btc_ton_events_state.remove(&account);
 
         Ok(())
     }
@@ -3717,7 +3719,7 @@ impl ReadFromTransaction for TonSolEventConfigurationEvent {
 
 #[derive(Debug, Clone)]
 enum SolTonEventConfigurationEvent {
-    EventDeployed { address: UInt256 },
+    EventsDeployed { events: Vec<UInt256> },
     SetEndTimestamp { end_timestamp: u64 },
 }
 
@@ -3728,6 +3730,35 @@ impl ReadFromTransaction for SolTonEventConfigurationEvent {
         let set_end_timestamp = sol_ton_event_configuration_contract::set_end_timestamp();
 
         match nekoton_abi::read_function_id(&in_msg_body).ok()? {
+            id if id == set_end_timestamp.input_id => {
+                let end_timestamp = set_end_timestamp
+                    .decode_input(in_msg_body, true)
+                    .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
+                    .ok()?;
+
+                Some(Self::SetEndTimestamp { end_timestamp })
+            }
+            _ => {
+                let events = ctx.find_new_event_contract_addresses();
+                Some(Self::EventsDeployed { events })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum TonBtcEventConfigurationEvent {
+    EventDeployed { address: UInt256 },
+    SetEndTimestamp { end_timestamp: u32 },
+}
+
+impl ReadFromTransaction for TonBtcEventConfigurationEvent {
+    fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
+        let in_msg_body = ctx.in_msg_internal()?.body()?;
+
+        let set_end_timestamp = ton_btc_event_configuration_contract::set_end_timestamp();
+
+        match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
                 let end_timestamp = set_end_timestamp
                     .decode_input(in_msg_body, true)
@@ -3771,37 +3802,6 @@ impl ReadFromTransaction for BtcTonEventConfigurationEvent {
                     return None;
                 }
                 Some(Self::EventsDeployed { events })
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum TonBtcEventConfigurationEvent {
-    EventDeployed { address: UInt256 },
-    SetEndTimestamp { end_timestamp: u32 },
-}
-
-impl ReadFromTransaction for TonBtcEventConfigurationEvent {
-    fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
-        let in_msg_body = ctx.in_msg_internal()?.body()?;
-
-        let set_end_timestamp = ton_btc_event_configuration_contract::set_end_timestamp();
-
-        match read_function_id(&in_msg_body).ok()? {
-            id if id == set_end_timestamp.input_id => {
-                let end_timestamp = set_end_timestamp
-                    .decode_input(in_msg_body, true)
-                    .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
-                    .ok()?;
-
-                Some(Self::SetEndTimestamp { end_timestamp })
-            }
-            _ => {
-                let events = ctx.find_new_event_contract_addresses();
-                Some(Self::EventDeployed {
-                    address: events.into_iter().next()?,
-                })
             }
         }
     }
