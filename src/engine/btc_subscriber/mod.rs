@@ -146,31 +146,48 @@ impl BtcSubscriber {
             ))?
             .clone();
 
+        // Count the total output value
+        let total_out = withdrawals
+            .iter()
+            .fold(0u64, |total, (_, amount)| total + amount);
+
+        // TODO: get fee
+        let fee = 0;
+
+        // All outputs to spend
         let in_utxos = self.in_utxos.lock().await;
 
-        // Sort UTXO by balance
+        // Sort existing outputs by balance
         let mut in_utxos_vec: Vec<(&Utxo, &u64)> = in_utxos.iter().collect();
         in_utxos_vec.sort_by(|a, b| b.1.cmp(a.1));
 
-        // Min amount to spend
-        let amount_to_spend = withdrawals.iter().fold(0u64, |amount, (_, v)| amount + v);
+        // Outputs to spend for current withdrawal
+        let mut in_outputs = vec![];
+        {
+            let mut total = 0;
+            for (output, amount) in in_utxos_vec {
+                in_outputs.push((output.clone(), amount));
+                total += amount;
 
-        // Get list of UTXO to spend
-        let mut sum = 0;
-        let mut utxos = vec![];
-        for (utxo, value) in in_utxos_vec {
-            utxos.push(utxo.clone());
-            sum += value;
-
-            if sum >= amount_to_spend {
-                break;
+                if total >= total_out {
+                    break;
+                }
             }
         }
 
+        // Check all given inputs
+        let total_in = in_outputs
+            .iter()
+            .fold(0u64, |total, (_, &amount)| total + amount);
+
+        if total_out + fee > total_in {
+            return Err(BtcSubscriberError::InsufficientBalance.into());
+        }
+
         // Get inputs
-        let input = utxos
+        let input: Vec<_> = in_outputs
             .into_iter()
-            .map(|utxo| transaction::TxIn {
+            .map(|(utxo, _)| transaction::TxIn {
                 previous_output: OutPoint {
                     txid: utxo.tx_id,
                     vout: utxo.vout,
@@ -182,13 +199,21 @@ impl BtcSubscriber {
             .collect();
 
         // Get outputs
-        let output = withdrawals
+        let mut output: Vec<_> = withdrawals
             .into_iter()
             .map(|(script_pubkey, value)| transaction::TxOut {
                 value,
                 script_pubkey,
             })
             .collect();
+
+        // Add change.
+        let change_amount = total_in - total_out - fee;
+        let change_addr = Script::new(); // TODO: get change address
+        output.push(transaction::TxOut {
+            value: change_amount,
+            script_pubkey: change_addr,
+        });
 
         // Get transaction
         let tx = transaction::Transaction {
@@ -523,6 +548,8 @@ type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
 enum BtcSubscriberError {
     #[error("BTC withdrawals `{0}` not found")]
     WithdrawalsNotFound(String),
+    #[error("Insufficient BTC balance to make withdrawal")]
+    InsufficientBalance,
 }
 
 // Iteration
