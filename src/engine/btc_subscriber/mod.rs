@@ -298,6 +298,15 @@ impl BtcSubscriber {
         Ok(())
     }
 
+    pub async fn get_pending_withdrawals(&self) -> Vec<UInt256> {
+        self.pending_withdrawals
+            .lock()
+            .await
+            .iter()
+            .map(|(&account, _)| account)
+            .collect()
+    }
+
     async fn update(&self) -> Result<()> {
         if self.pending_events.lock().await.is_empty() {
             // Wait until new events appeared or idle poll interval passed.

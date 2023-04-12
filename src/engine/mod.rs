@@ -16,6 +16,7 @@ use self::sol_subscriber::*;
 use self::staking::*;
 use self::ton_contracts::*;
 use self::ton_subscriber::*;
+use self::workers::*;
 use crate::config::*;
 use crate::utils::*;
 
@@ -27,12 +28,14 @@ mod sol_subscriber;
 mod staking;
 mod ton_contracts;
 mod ton_subscriber;
+mod workers;
 
 pub struct Engine {
     metrics_exporter: Arc<pomfrit::MetricsExporter>,
     context: Arc<EngineContext>,
     bridge: Mutex<Option<Arc<Bridge>>>,
     staking: Mutex<Option<Arc<Staking>>>,
+    workers: Mutex<Option<Arc<Workers>>>,
 }
 
 impl Engine {
@@ -54,6 +57,7 @@ impl Engine {
             context,
             bridge: Mutex::new(None),
             staking: Mutex::new(None),
+            workers: Mutex::new(None),
         });
 
         metrics_writer.spawn({
@@ -120,6 +124,10 @@ impl Engine {
             .await
             .context("Failed to init staking")?;
         *self.staking.lock() = Some(staking);
+
+        // Initialize workers
+        let workers = Workers::new(self.context.clone(), 60).await;
+        *self.workers.lock() = Some(workers);
 
         // Start ETH subscribers
         self.context.eth_subscribers.start();

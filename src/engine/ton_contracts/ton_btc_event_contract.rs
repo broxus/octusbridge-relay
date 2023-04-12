@@ -35,6 +35,16 @@ pub fn cancel() -> &'static ton_abi::Function {
     })
 }
 
+/// External function
+pub fn finalize() -> &'static ton_abi::Function {
+    crate::once!(ton_abi::Function, || {
+        FunctionBuilder::new("finalize")
+            .abi_version(ton_abi::contract::ABI_VERSION_2_2)
+            .time_header()
+            .build()
+    })
+}
+
 /// External responsible function
 pub fn get_event_init_data() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
