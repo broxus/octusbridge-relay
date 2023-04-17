@@ -1,4 +1,4 @@
-use std::collections::hash_map;
+use std::collections::{hash_map, BTreeMap};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -9,6 +9,7 @@ use bitcoin::blockdata::transaction;
 use bitcoin::hash_types::Txid;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::hashes::Hash;
+use bitcoin::util::psbt;
 use bitcoin::{BlockHash, OutPoint, PackedLockTime, Script, Witness};
 use esplora_client::Builder;
 use futures_util::StreamExt;
@@ -226,19 +227,36 @@ impl BtcSubscriber {
 
         // Add change.
         let change_amount = total_in - total_out - fee;
-        let change_addr = Script::new(); // TODO: get change address
+
+        // TODO: get TSS pubkey from everscale-network
+        let master_xpub = bitcoin::util::bip32::ExtendedPubKey::from_str("").unwrap();
+        let change_addr = self
+            .address_tracker
+            .generate_script_pubkey(master_xpub, 0)?;
+
         output.push(transaction::TxOut {
             value: change_amount,
             script_pubkey: change_addr,
         });
 
-        // Get transaction
-        let tx = transaction::Transaction {
-            version: 1,
-            lock_time: PackedLockTime::ZERO,
-            input,
-            output,
+        let psbt = psbt::Psbt {
+            unsigned_tx: transaction::Transaction {
+                version: 2,
+                lock_time: PackedLockTime::ZERO,
+                input,
+                output,
+            },
+            unknown: BTreeMap::new(),
+            proprietary: BTreeMap::new(),
+            xpub: BTreeMap::new(),
+            version: 0,
+            inputs: vec![],
+            outputs: vec![],
         };
+
+        // TODO: sign and finalize
+
+        let tx = psbt.extract_tx();
 
         Ok(tx)
     }

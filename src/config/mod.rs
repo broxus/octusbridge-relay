@@ -77,7 +77,7 @@ pub struct BridgeConfig {
     #[serde(default)]
     pub sol_network: Option<SolConfig>,
 
-    /// Solana network settings
+    /// BTC network settings
     #[serde(default)]
     pub btc_network: Option<BtcConfig>,
 

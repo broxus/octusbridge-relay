@@ -9,11 +9,11 @@ pub struct BtcConfig {
     /// RPC endpoint
     pub esplora_url: String,
 
-    /// Path to rocks db containing UTXO balances endpoint
-    pub rocks_db_path: String,
-
-    // Backup public keys
+    /// Backup public keys
     pub bkp_public_keys: [String; 3],
+
+    /// BTC network
+    pub network: bitcoin::Network,
 
     /// Max simultaneous connection count. Default: 10
     #[serde(default = "const_usize::<10>")]
