@@ -41,6 +41,9 @@ impl BtcSubscriber {
         let builder = Builder::new(&config.esplora_url);
         let rpc_client = Arc::new(builder.build_async()?);
 
+        let block_height = rpc_client.get_height().await?;
+        tracing::info!(block_height, "created BTC subscriber");
+
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
         let address_tracker = Arc::new(tracker::AddressTracker::new(&config.bkp_public_keys)?);
