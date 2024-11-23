@@ -1,8 +1,6 @@
-use anyhow::{Context, Result};
 use ton_types::UInt256;
 
 use super::existing_contract::*;
-use super::shard_utils::*;
 
 pub trait ReadFromTransaction: Sized + Send + Sync {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self>;
@@ -23,8 +21,7 @@ where
 
 #[derive(Copy, Clone)]
 pub struct TxContext<'a> {
-    pub shard_accounts: &'a ton_block::ShardAccounts,
-    pub block_info: &'a ton_block::BlockInfo,
+    pub account_state: &'a ExistingContract,
     pub account: &'a UInt256,
     pub transaction_hash: &'a UInt256,
     pub transaction_info: &'a ton_block::TransactionDescrOrdinary,
@@ -118,11 +115,5 @@ impl TxContext<'_> {
                 Ok(true)
             })
             .ok();
-    }
-
-    pub fn get_account_state(&self) -> Result<ExistingContract> {
-        self.shard_accounts
-            .find_account(self.account)?
-            .context("Account not found after transaction")
     }
 }

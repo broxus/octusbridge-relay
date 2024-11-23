@@ -50,18 +50,11 @@ struct CmdRun {
     /// path to config file ('config.yaml' by default)
     #[argh(option, short = 'c', default = "String::from(\"config.yaml\")")]
     config: String,
-
-    /// path to global config file
-    #[argh(option, short = 'g')]
-    global_config: String,
 }
 
 impl CmdRun {
     fn execute(self) -> Result<()> {
         let (relay, config) = create_relay(&self.config)?;
-
-        let global_config = ton_indexer::GlobalConfig::from_file(&self.global_config)
-            .context("Failed to open global config")?;
 
         // Create engine future
         let engine = async move {
@@ -69,7 +62,7 @@ impl CmdRun {
             relay.start_listening_reloads()?;
 
             tracing::info!("initializing relay...");
-            let mut shutdown_requests_rx = relay.init(config, global_config).await?;
+            let mut shutdown_requests_rx = relay.init(config).await?;
             tracing::info!("initialized relay");
 
             shutdown_requests_rx.recv().await;
@@ -275,14 +268,10 @@ struct Relay {
 }
 
 impl Relay {
-    async fn init(
-        &self,
-        config: AppConfig,
-        global_config: ton_indexer::GlobalConfig,
-    ) -> Result<ShutdownRequestsRx> {
+    async fn init(&self, config: AppConfig) -> Result<ShutdownRequestsRx> {
         let (shutdown_requests_tx, shutdown_requests_rx) = mpsc::unbounded_channel();
 
-        let engine = Engine::new(config, global_config, shutdown_requests_tx)
+        let engine = Engine::new(config, shutdown_requests_tx)
             .await
             .context("Failed to create engine")?;
         *self.engine.lock().await = Some(engine.clone());

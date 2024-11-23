@@ -1,78 +1,89 @@
 use std::collections::hash_map;
-use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
-use anyhow::{Context, Result};
-use parking_lot::Mutex;
+use anyhow::Result;
+use everscale_rpc_client::RpcClient;
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
+use nekoton_utils::TrustMe;
 use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, oneshot, watch, Notify};
-use ton_block::{BinTreeType, Deserializable, HashmapAugType};
-use ton_indexer::utils::ShardStateStuff;
-use ton_indexer::{BriefBlockMeta, EngineStatus, ProcessBlockContext};
-use ton_types::{HashmapType, UInt256};
+use tokio::sync::{mpsc, Mutex, Semaphore};
+use ton_block::{GetRepresentationHash, MsgAddressInt};
+use ton_types::UInt256;
 
-use crate::storage::*;
 use crate::utils::*;
 
+const POLLING_INTERVAL_SECS: u64 = 3;
+const POOL_SIZE: usize = 15;
+
+// TODO: do we need to update signature_id once in a while
 pub struct TonSubscriber {
-    ready: AtomicBool,
-    ready_signal: Notify,
     current_utime: AtomicU32,
+    start_block_lt: AtomicU64,
     signature_id: SignatureId,
-    state_subscriptions: Mutex<FxHashMap<UInt256, StateSubscription>>,
-    mc_block_awaiters: Mutex<FxHashMap<usize, Box<dyn BlockAwaiter>>>,
+    account_subscriptions: Mutex<FxHashMap<UInt256, AccountSubscription>>,
+    polling_interval: Duration,
+    pool: Semaphore,
     messages_queue: Arc<PendingMessagesQueue>,
-    persistent_storage: Arc<PersistentStorage>,
-    runtime_storage: Arc<RuntimeStorage>,
+    rpc_client: RpcClient,
 }
 
 impl TonSubscriber {
-    pub fn new(
-        messages_queue: Arc<PendingMessagesQueue>,
-        persistent_storage: Arc<PersistentStorage>,
-        runtime_storage: Arc<RuntimeStorage>,
-    ) -> Arc<Self> {
+    pub fn new(messages_queue: Arc<PendingMessagesQueue>, rpc_client: RpcClient) -> Arc<Self> {
         Arc::new(Self {
-            ready: AtomicBool::new(false),
-            ready_signal: Notify::new(),
-            current_utime: AtomicU32::new(0),
+            current_utime: Default::default(),
+            start_block_lt: Default::default(),
             signature_id: SignatureId::default(),
-            state_subscriptions: Mutex::new(FxHashMap::with_capacity_and_hasher(
+            account_subscriptions: Mutex::new(FxHashMap::with_capacity_and_hasher(
                 128,
                 Default::default(),
             )),
-            mc_block_awaiters: Mutex::new(FxHashMap::with_capacity_and_hasher(
-                4,
-                Default::default(),
-            )),
+            polling_interval: Duration::from_secs(POLLING_INTERVAL_SECS),
+            pool: Semaphore::new(POOL_SIZE),
             messages_queue,
-            persistent_storage,
-            runtime_storage,
+            rpc_client,
         })
     }
 
     pub fn metrics(&self) -> TonSubscriberMetrics {
         TonSubscriberMetrics {
-            ready: self.ready.load(Ordering::Acquire),
             current_utime: self.current_utime(),
             signature_id: self.signature_id(),
             pending_message_count: self.messages_queue.len(),
         }
     }
 
-    pub async fn start(self: &Arc<Self>, engine: &ton_indexer::Engine) -> Result<()> {
-        let last_key_block = engine.load_last_key_block().await?;
-        self.update_signature_id(last_key_block.block())?;
-
-        self.wait_sync().await;
-
-        let current_utime = chrono::Utc::now().timestamp() as u32;
-        tracing::info!(current_utime, "waiting for the masterchain block");
-        self.wait_shards(Some(current_utime)).await?;
-        tracing::info!(current_utime, "finished waiting for the masterchain block");
+    pub fn initialize(self: &Arc<Self>, last_key_block: &ton_block::Block) -> Result<()> {
+        tracing::info!("starting ton subscriber");
+        self.update_signature_id(last_key_block)?;
+        self.set_start_block_lt(last_key_block)?;
+        tracing::info!("ton subscriber started");
 
         Ok(())
+    }
+
+    pub fn start(self: &Arc<Self>) -> Result<()> {
+        let this = self.clone();
+        tokio::spawn(this.start_polling());
+
+        Ok(())
+    }
+
+    async fn start_polling(self: Arc<Self>) {
+        tracing::info!("Starting polling");
+        loop {
+            let current_utime = chrono::Utc::now().timestamp() as u32;
+
+            self.current_utime.store(current_utime, Ordering::Release);
+
+            if let Err(err) = self.clone().poll_transactions().await {
+                tracing::error!("Error while polling transactions: {}", err);
+            }
+
+            tokio::time::sleep(self.polling_interval).await;
+        }
     }
 
     pub fn current_utime(&self) -> u32 {
@@ -83,103 +94,20 @@ impl TonSubscriber {
         self.signature_id.load()
     }
 
-    pub async fn wait_shards(&self, since: Option<u32>) -> Result<LatestShardBlocks> {
-        struct Handler {
-            since: Option<u32>,
-            tx: Option<oneshot::Sender<Result<LatestShardBlocks>>>,
-        }
-
-        impl BlockAwaiter for Handler {
-            fn handle_block(
-                &mut self,
-                block: &ton_block::Block,
-                block_info: &ton_block::BlockInfo,
-            ) -> Result<BlockAwaiterAction> {
-                if matches!(self.since, Some(since) if block_info.gen_utime().as_u32() < since) {
-                    return Ok(BlockAwaiterAction::Retain);
-                }
-
-                if let Some(tx) = self.tx.take() {
-                    let _ = tx.send(extract_shards(block, block_info));
-                }
-                Ok(BlockAwaiterAction::Remove)
-            }
-        }
-
-        fn extract_shards(
-            block: &ton_block::Block,
-            block_info: &ton_block::BlockInfo,
-        ) -> Result<LatestShardBlocks> {
-            let current_utime = block_info.gen_utime().as_u32();
-            let extra = block.extra.read_struct()?;
-            let custom = match extra.read_custom()? {
-                Some(custom) => custom,
-                None => {
-                    return Ok(LatestShardBlocks {
-                        current_utime,
-                        block_ids: Default::default(),
-                    })
-                }
-            };
-
-            let mut block_ids = FxHashMap::with_capacity_and_hasher(16, Default::default());
-
-            custom.shards().iterate_with_keys(
-                |wc_id: i32, ton_block::InRefValue(shards_tree)| {
-                    if wc_id == ton_block::MASTERCHAIN_ID {
-                        return Ok(true);
-                    }
-
-                    shards_tree.iterate(|prefix, descr| {
-                        let shard_id = ton_block::ShardIdent::with_prefix_slice(wc_id, prefix)?;
-
-                        block_ids.insert(
-                            shard_id,
-                            ton_block::BlockIdExt::with_params(
-                                shard_id,
-                                descr.seq_no,
-                                descr.root_hash,
-                                descr.file_hash,
-                            ),
-                        );
-                        Ok(true)
-                    })
-                },
-            )?;
-
-            Ok(LatestShardBlocks {
-                current_utime,
-                block_ids,
-            })
-        }
-
-        let (tx, rx) = oneshot::channel();
-        self.mc_block_awaiters.lock().insert(
-            BLOCK_AWAITER_ID.fetch_add(1, Ordering::Relaxed),
-            Box::new(Handler {
-                since,
-                tx: Some(tx),
-            }),
-        );
-        rx.await?
-    }
-
-    pub fn add_transactions_subscription<I, T>(&self, accounts: I, subscription: &Arc<T>)
+    pub async fn add_transactions_subscription<I, T>(&self, accounts: I, subscription: &Arc<T>)
     where
         I: IntoIterator<Item = UInt256>,
         T: TransactionsSubscription + 'static,
     {
-        let mut state_subscriptions = self.state_subscriptions.lock();
+        let mut state_subscriptions = self.account_subscriptions.lock().await;
 
         let weak = Arc::downgrade(subscription) as Weak<dyn TransactionsSubscription>;
 
         for account in accounts {
             match state_subscriptions.entry(account) {
                 hash_map::Entry::Vacant(entry) => {
-                    let (state_tx, state_rx) = watch::channel(None);
-                    entry.insert(StateSubscription {
-                        state_tx,
-                        state_rx,
+                    entry.insert(AccountSubscription {
+                        latest_lt: self.get_start_block_lt().into(),
                         transaction_subscriptions: vec![weak.clone()],
                     });
                 }
@@ -190,193 +118,196 @@ impl TonSubscriber {
         }
     }
 
-    pub async fn get_contract_state(&self, account: UInt256) -> Result<Option<ExistingContract>> {
-        let mut state_rx = match self.state_subscriptions.lock().entry(account) {
-            hash_map::Entry::Vacant(entry) => {
-                let (state_tx, state_rx) = watch::channel(None);
-                entry
-                    .insert(StateSubscription {
-                        state_tx,
-                        state_rx,
-                        transaction_subscriptions: Vec::new(),
-                    })
-                    .state_rx
-                    .clone()
-            }
-            hash_map::Entry::Occupied(entry) => entry.get().state_rx.clone(),
-        };
-
-        state_rx.changed().await?;
-        let account = state_rx.borrow_and_update();
-        ExistingContract::from_shard_account_opt(account.deref())
+    pub async fn get_contract_state(&self, account: &UInt256) -> Result<Option<ExistingContract>> {
+        let account_id = ton_types::AccountId::from(account);
+        let address = &MsgAddressInt::with_standart(None, 0, account_id)?;
+        let state = self.rpc_client.get_contract_state(address, None).await;
+        state.map(|state_opt| {
+            state_opt.map(|state| ExistingContract {
+                account: state.account,
+                last_transaction_id: state.last_transaction_id,
+            })
+        })
     }
 
-    pub async fn wait_contract_state(&self, account: UInt256) -> Result<ExistingContract> {
-        let mut state_rx = match self.state_subscriptions.lock().entry(account) {
-            hash_map::Entry::Vacant(entry) => {
-                let (state_tx, state_rx) = watch::channel(None);
-                entry
-                    .insert(StateSubscription {
-                        state_tx,
-                        state_rx,
-                        transaction_subscriptions: Vec::new(),
-                    })
-                    .state_rx
-                    .clone()
-            }
-            hash_map::Entry::Occupied(entry) => entry.get().state_rx.clone(),
-        };
-
+    pub async fn wait_contract_state(&self, account: &UInt256) -> Result<ExistingContract> {
         loop {
-            state_rx.changed().await?;
-
-            let shard_account = match state_rx.borrow_and_update().deref() {
-                Some(shard_account) => ExistingContract::from_shard_account(shard_account)?,
-                None => continue,
+            let Some(contract_state) = self.get_contract_state(account).await? else {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
             };
 
-            match shard_account {
-                Some(account) => match &account.account.storage.state {
-                    ton_block::AccountState::AccountActive { .. } => {
-                        return Ok(account);
-                    }
-                    ton_block::AccountState::AccountFrozen { .. } => {
-                        return Err(TonSubscriberError::AccountIsFrozen.into())
-                    }
-                    ton_block::AccountState::AccountUninit => continue,
-                },
-                _ => continue,
+            match &contract_state.account.storage.state {
+                ton_block::AccountState::AccountActive { .. } => {
+                    return Ok(contract_state);
+                }
+                ton_block::AccountState::AccountFrozen { .. } => {
+                    return Err(TonSubscriberError::AccountIsFrozen.into())
+                }
+                ton_block::AccountState::AccountUninit => {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
             }
         }
     }
 
-    fn handle_masterchain_block(
+    pub async fn get_transactions(
         &self,
-        meta: BriefBlockMeta,
-        block_id: &ton_block::BlockIdExt,
-        block: &ton_block::Block,
-    ) -> Result<()> {
-        let gen_utime = meta.gen_utime();
-        self.current_utime.store(gen_utime, Ordering::Release);
+        account: &UInt256,
+        oldest_transaction_lt: u64,
+    ) -> Result<Vec<ton_block::Transaction>> {
+        const TRANSACTION_LIMIT: u8 = 100;
 
-        let block_info = block.info.read_struct()?;
-        if block_info.key_block() {
-            self.update_signature_id(block)?;
+        tracing::debug!(account = %DisplayAddr(account), "getting transactions");
+
+        let account_id = ton_types::AccountId::from(account);
+        let address = &MsgAddressInt::with_standart(None, 0, account_id)?;
+        let mut transactions = self
+            .rpc_client
+            .get_transactions(TRANSACTION_LIMIT, address, None)
+            .await?;
+        if transactions.len() < TRANSACTION_LIMIT as usize {
+            transactions.retain(|transaction| transaction.lt >= oldest_transaction_lt);
+            return Ok(transactions);
         }
 
-        if !self.ready.load(Ordering::Acquire) {
-            return Ok(());
+        loop {
+            let oldest_retrieved_transaction = transactions.last().trust_me();
+            if oldest_transaction_lt >= oldest_retrieved_transaction.lt {
+                break;
+            }
+
+            let next_batch = self
+                .rpc_client
+                .get_transactions(
+                    TRANSACTION_LIMIT,
+                    address,
+                    Some(oldest_retrieved_transaction.prev_trans_lt),
+                )
+                .await?;
+            let next_batch_len = next_batch.len();
+            if next_batch_len == 0 {
+                break;
+            }
+            transactions.extend(next_batch);
+            if next_batch_len < TRANSACTION_LIMIT as usize {
+                break;
+            }
         }
 
-        let mut mc_block_awaiters = self.mc_block_awaiters.lock();
-        mc_block_awaiters.retain(
-            |_, awaiter| match awaiter.handle_block(block, &block_info) {
-                Ok(action) => action == BlockAwaiterAction::Retain,
-                Err(e) => {
-                    tracing::error!(%block_id, "failed to handle masterchain block: {e:?}");
-                    true
-                }
-            },
+        transactions.retain(|transaction| transaction.lt >= oldest_transaction_lt);
+        Ok(transactions)
+    }
+
+    pub async fn get_accounts_by_code_hash(
+        &self,
+        code_hash: UInt256,
+    ) -> Result<Vec<MsgAddressInt>> {
+        let hash = *code_hash.as_slice();
+        let mut accounts = self
+            .rpc_client
+            .get_accounts_by_code_hash(hash, None, 100)
+            .await?;
+        if accounts.is_empty() {
+            return Ok(accounts);
+        }
+
+        loop {
+            let next_batch = self
+                .rpc_client
+                .get_accounts_by_code_hash(hash, accounts.last(), 100)
+                .await?;
+            if next_batch.is_empty() {
+                break;
+            }
+            accounts.extend(next_batch);
+        }
+
+        tracing::info!(
+            code_hash = %DisplayCodeHash(code_hash),
+            "Found {} accounts",
+            accounts.len()
         );
+
+        Ok(accounts)
+    }
+
+    async fn poll_transactions(self: &Arc<Self>) -> Result<()> {
+        let mut subscriptions = self.account_subscriptions.lock().await;
+        subscriptions.retain(|_, subscription| {
+            let subscription_status = subscription.update_status();
+            subscription_status != TransactionSubscriptionsStatus::Stopped
+        });
+
+        let tasks = FuturesUnordered::new();
+        for (account, subscription) in subscriptions.iter() {
+            let this = self.clone();
+            let latest_lt = subscription.get_latest_lt();
+            let account = *account;
+
+            tasks.push(tokio::spawn(async move {
+                let _permit = this.pool.acquire().await;
+                let account_state = match this.get_contract_state(&account).await {
+                    Ok(Some(account_state)) => account_state,
+                    Ok(None) => {
+                        tracing::warn!(address = %DisplayAddr(account), "Account does not exist");
+                        return None;
+                    }
+                    Err(e) => {
+                        tracing::error!(address = %DisplayAddr(account), "No contract state for account: {e:?}");
+                        return None;
+                    }
+                };
+
+                let transactions = match this.get_transactions(&account, latest_lt + 1).await {
+                    Ok(transactions) => transactions,
+                    Err(e) => {
+                        tracing::error!(address = %DisplayAddr(account), "Failed to poll transactions: {e:?}");
+                        return None;
+                    }
+                };
+
+                Some((account, (account_state, transactions)))
+            }));
+        }
+
+        let transactions_map: FxHashMap<_, _> = tasks
+            .filter_map(|task| async { task.ok().flatten() })
+            .collect()
+            .await;
+
+        for (account, subscription) in subscriptions.iter() {
+            let (account_state, transactions) = transactions_map.get(account).trust_me();
+            if let Err(e) = subscription.process_transactions(
+                &self.messages_queue,
+                account_state,
+                &mut transactions.clone(),
+                account,
+            ) {
+                tracing::error!(address = %DisplayAddr(account), "Failed to process transactions: {e:?}");
+            }
+        }
 
         Ok(())
     }
 
-    fn handle_shard_block(
-        &self,
-        block_id: &ton_block::BlockIdExt,
-        block: &ton_block::Block,
-        shard_state: &ton_block::ShardStateUnsplit,
-    ) -> Result<()> {
-        if !self.ready.load(Ordering::Acquire) {
-            return Ok(());
-        }
+    fn get_start_block_lt(&self) -> u64 {
+        self.start_block_lt.load(Ordering::Acquire)
+    }
 
-        let block_info = block.info.read_struct()?;
-        let extra = block.extra.read_struct()?;
-        let account_blocks = extra.read_account_blocks()?;
-        let shard_accounts = shard_state.read_accounts()?;
-
-        {
-            let mut subscriptions = self.state_subscriptions.lock();
-            subscriptions.retain(|account, subscription| {
-                let subscription_status = subscription.update_status();
-                if subscription_status == StateSubscriptionStatus::Stopped {
-                    return false;
-                }
-
-                if !contains_account(block_info.shard(), account) {
-                    return true;
-                }
-
-                let mut keep = true;
-
-                if subscription_status == StateSubscriptionStatus::Alive {
-                    match shard_accounts.get(account) {
-                        Ok(mut state) => {
-                            let should_send = match &mut state {
-                                // If account exists, all its cells must be preloaded
-                                // to get rid of rocksdb access
-                                Some(state) => {
-                                    match state.account_cell().preload_with_depth_hint::<20>() {
-                                        // Account is now fully in memory
-                                        Ok(()) => true,
-                                        // Failed to load all cells
-                                        Err(e) => {
-                                            tracing::error!(
-                                                account = %DisplayAddr(account),
-                                                "failed to preload account: {e:?}",
-                                            );
-                                            false
-                                        }
-                                    }
-                                }
-                                // Empty accounts can be sent without preloading
-                                None => true,
-                            };
-
-                            if should_send && subscription.state_tx.send(state).is_err() {
-                                tracing::error!(
-                                    account = %DisplayAddr(account),
-                                    "shard subscription somehow dropped",
-                                );
-                                keep = false;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                account = %DisplayAddr(account),
-                                "failed to get account: {e:?}",
-                            );
-                        }
-                    };
-                } else {
-                    subscription.state_rx.borrow_and_update();
-                }
-
-                if let Err(e) = subscription.handle_block(
-                    &self.messages_queue,
-                    &shard_accounts,
-                    block_id,
-                    &block_info,
-                    &account_blocks,
-                    account,
-                ) {
-                    tracing::error!(%block_id, "failed to handle block: {e:?}");
-                }
-
-                keep
-            });
-        }
-
-        self.messages_queue
-            .update(block_info.shard(), block_info.gen_utime().as_u32());
+    fn set_start_block_lt(&self, key_block: &ton_block::Block) -> Result<()> {
+        let block_info = key_block.info.read_struct()?;
+        let start_block_lt = block_info.end_lt();
+        self.start_block_lt.store(start_block_lt, Ordering::Release);
 
         Ok(())
     }
 
     #[cfg(not(feature = "ton"))]
     fn update_signature_id(&self, key_block: &ton_block::Block) -> Result<()> {
+        use anyhow::Context;
+
         let extra = key_block.read_extra()?;
         let custom = extra
             .read_custom()?
@@ -397,137 +328,50 @@ impl TonSubscriber {
 
         Ok(())
     }
-
-    async fn wait_sync(&self) {
-        if self.ready.load(Ordering::Acquire) {
-            return;
-        }
-        self.ready_signal.notified().await;
-    }
-}
-
-#[async_trait::async_trait]
-impl ton_indexer::Subscriber for TonSubscriber {
-    async fn engine_status_changed(&self, status: EngineStatus) {
-        if status == EngineStatus::Synced {
-            tracing::info!("TON subscriber is ready");
-            self.ready.store(true, Ordering::Release);
-            self.ready_signal.notify_waiters();
-        }
-    }
-
-    async fn process_block(&self, ctx: ProcessBlockContext<'_>) -> Result<()> {
-        if let Some(shard_state) = ctx.shard_state() {
-            if ctx.is_masterchain() {
-                self.handle_masterchain_block(ctx.meta(), ctx.id(), ctx.block())?;
-            } else {
-                self.handle_shard_block(ctx.id(), ctx.block(), shard_state)?;
-            }
-        }
-
-        self.persistent_storage.update(
-            ctx.block_stuff().id(),
-            ctx.block_stuff().block(),
-            ctx.shard_state_stuff(),
-        )?;
-
-        if let Some(shard_state) = &ctx.shard_state_stuff() {
-            let block_info = &ctx.block_stuff().block().read_info()?;
-            self.runtime_storage.update_contract_states(
-                ctx.block_stuff().id(),
-                block_info,
-                shard_state,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    async fn process_full_state(&self, state: Arc<ShardStateStuff>) -> Result<()> {
-        self.persistent_storage
-            .reset_accounts(state)
-            .await
-            .context("Failed to update server state")
-    }
-
-    async fn process_blocks_edge(
-        &self,
-        _: ton_indexer::ProcessBlocksEdgeContext<'_>,
-    ) -> Result<()> {
-        self.persistent_storage.update_snapshot();
-        Ok(())
-    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct TonSubscriberMetrics {
-    pub ready: bool,
     pub current_utime: u32,
     pub signature_id: Option<i32>,
     pub pending_message_count: usize,
 }
 
-static BLOCK_AWAITER_ID: AtomicUsize = AtomicUsize::new(0);
-
-struct StateSubscription {
-    state_tx: ShardAccountTx,
-    state_rx: ShardAccountRx,
+struct AccountSubscription {
+    latest_lt: AtomicU64,
     transaction_subscriptions: Vec<Weak<dyn TransactionsSubscription>>,
 }
 
-impl StateSubscription {
-    fn update_status(&mut self) -> StateSubscriptionStatus {
+impl AccountSubscription {
+    fn get_latest_lt(&self) -> u64 {
+        self.latest_lt.load(Ordering::Acquire)
+    }
+
+    fn update_status(&mut self) -> TransactionSubscriptionsStatus {
         self.transaction_subscriptions
             .retain(|item| item.strong_count() > 0);
 
-        if self.state_tx.receiver_count() > 1 {
-            StateSubscriptionStatus::Alive
-        } else if !self.transaction_subscriptions.is_empty() {
-            StateSubscriptionStatus::PartlyAlive
+        if !self.transaction_subscriptions.is_empty() {
+            TransactionSubscriptionsStatus::Alive
         } else {
-            StateSubscriptionStatus::Stopped
+            TransactionSubscriptionsStatus::Stopped
         }
     }
 
-    fn handle_block(
+    fn process_transactions(
         &self,
         messages_queue: &PendingMessagesQueue,
-        shard_accounts: &ton_block::ShardAccounts,
-        block_id: &ton_block::BlockIdExt,
-        block_info: &ton_block::BlockInfo,
-        account_blocks: &ton_block::ShardAccountBlocks,
+        account_state: &ExistingContract,
+        transactions: &mut [ton_block::Transaction],
         account: &UInt256,
     ) -> Result<()> {
         if self.transaction_subscriptions.is_empty() {
             return Ok(());
         }
 
-        let account_block = match account_blocks
-            .get_with_aug(account)
-            .with_context(|| format!("Failed to get account block for {account:x}"))?
-        {
-            Some((account_block, _)) => account_block,
-            None => return Ok(()),
-        };
-
-        for transaction in account_block.transactions().iter() {
-            let (hash, transaction) = match transaction.and_then(|(_, value)| {
-                let cell = value.into_cell().reference(0)?;
-                let hash = cell.repr_hash();
-
-                ton_block::Transaction::construct_from_cell(cell)
-                    .map(|transaction| (hash, transaction))
-            }) {
-                Ok(tx) => tx,
-                Err(e) => {
-                    tracing::error!(
-                        %block_id,
-                        account = %DisplayAddr(account),
-                        "failed to parse transaction: {e:?}",
-                    );
-                    continue;
-                }
-            };
+        sort_maybe_desc_to_asc(transactions, |t| t.lt);
+        for transaction in transactions.iter() {
+            let hash = transaction.hash()?;
 
             // Skip non-ordinary or aborted transactions
             let transaction_info = match transaction.description.read_struct() {
@@ -550,12 +394,11 @@ impl StateSubscription {
             };
 
             let ctx = TxContext {
-                shard_accounts,
-                block_info,
+                account_state,
                 account,
                 transaction_hash: &hash,
                 transaction_info: &transaction_info,
-                transaction: &transaction,
+                transaction,
                 in_msg: &in_msg,
             };
 
@@ -563,13 +406,14 @@ impl StateSubscription {
             for subscription in self.iter_transaction_subscriptions() {
                 if let Err(e) = subscription.handle_transaction(ctx) {
                     tracing::error!(
-                        %block_id,
                         tx = hash.to_hex_string(),
                         account = %DisplayAddr(account),
                         "Failed to handle transaction: {e:?}",
                     );
                 }
             }
+
+            self.latest_lt.store(transaction.lt, Ordering::Release);
         }
 
         Ok(())
@@ -585,24 +429,9 @@ impl StateSubscription {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-enum StateSubscriptionStatus {
+enum TransactionSubscriptionsStatus {
     Alive,
-    PartlyAlive,
     Stopped,
-}
-
-trait BlockAwaiter: Send + Sync {
-    fn handle_block(
-        &mut self,
-        block: &ton_block::Block,
-        block_info: &ton_block::BlockInfo,
-    ) -> Result<BlockAwaiterAction>;
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum BlockAwaiterAction {
-    Retain,
-    Remove,
 }
 
 pub trait TransactionsSubscription: Send + Sync {
@@ -630,7 +459,7 @@ where
             "got transaction on account: {event:?}",
         );
 
-        // Send event to event manager if it exist
+        // Send event to event manager if it exists
         if let Some(event) = event {
             if self.0.send((*ctx.account, event)).is_err() {
                 tracing::error!(
@@ -702,9 +531,6 @@ impl SignatureId {
     }
 }
 
-type ShardAccountTx = watch::Sender<Option<ton_block::ShardAccount>>;
-type ShardAccountRx = watch::Receiver<Option<ton_block::ShardAccount>>;
-
 pub type AccountEventsTx<T> = mpsc::UnboundedSender<(UInt256, T)>;
 
 #[derive(thiserror::Error, Debug)]
@@ -715,7 +541,13 @@ enum TonSubscriberError {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::ton_subscriber::SignatureId;
+    use crate::engine::ton_subscriber::{SignatureId, TonSubscriber};
+    use crate::utils::{only_account_hash, PendingMessagesQueue};
+    use everscale_rpc_client::RpcClient;
+    use nekoton_utils::TrustMe;
+    use std::str::FromStr;
+    use ton_block::MsgAddressInt;
+    use url::Url;
 
     #[test]
     fn test_signature_id() {
@@ -733,5 +565,28 @@ mod tests {
         signature_id.store(0x0, 1337);
         let id = signature_id.load();
         assert_eq!(id, None);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn transactions_playground() {
+        let rpc_url = Url::from_str("https://jrpc.everwallet.net/proto").trust_me();
+        let rpc_client = RpcClient::new(vec![rpc_url], Default::default())
+            .await
+            .trust_me();
+        let ton_subscriber = TonSubscriber::new(PendingMessagesQueue::new(0), rpc_client);
+
+        let account = MsgAddressInt::from_str(
+            "0:a519f99bb5d6d51ef958ed24d337ad75a1c770885dcd42d51d6663f9fcdacfb2",
+        )
+        .trust_me();
+        let account = only_account_hash(account);
+        let latest_lt = 54948624000006;
+        let txs = ton_subscriber
+            .get_transactions(&account, latest_lt + 1)
+            .await
+            .trust_me();
+
+        assert!(txs.len() > 100);
     }
 }

@@ -157,8 +157,6 @@ bridge_settings:
   bridge_address: "0:1d51fb47566d0d283ebbf83c641c01ebebaad6c3cec55895b0074b802036094e"
   # If set, relay will not participate in elections. Default: false
   ignore_elections: false
-  # Shard split depth
-  shard_split_depth: 10
   # Ton token metadata endpoint base url
   token_meta_base_url: "https://ton-tokens-api.meta"
   # Solana network config
@@ -230,20 +228,6 @@ bridge_settings:
       poll_interval_sec: 60
       maximum_failed_responses_time_sec: 604800
       max_block_range: 5000
-node_settings:
-  # Root directory for relay DB. Default: "./db"
-  db_path: "/var/db/relay"
-  # UDP port, used for ADNL node. Default: 30303
-  adnl_port: 30000
-  # Path to temporary ADNL keys.
-  # NOTE: Will be generated if it was not there.
-  # Default: "./adnl-keys.json"
-  temp_keys_path: "/etc/relay/adnl-keys.json"
-  db_options:
-    rocksdb_lru_capacity: "2 GB"
-    cells_cache_size: "4 GB"
-  adnl_options:
-    force_use_priority_channels: false
 storage:
   persistent_db_path: "/var/db/relay-events"
 metrics_settings:

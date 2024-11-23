@@ -58,13 +58,12 @@ impl Staking {
             .context("Failed to ensure that user data is confirmed")?;
 
         // Prepare initial data
-        let (shard_accounts, relay_round_details, relay_round_state, user_data_account) = loop {
-            // Load all shard states
-            let shard_accounts = ctx.get_all_shard_accounts().await?;
-
+        let (relay_round_details, relay_round_state, user_data_account) = loop {
             // Get all info from staking contract
-            let staking_contract = shard_accounts
-                .find_account(&staking_account)?
+            let staking_contract = ctx
+                .ton_subscriber
+                .get_contract_state(&staking_account)
+                .await?
                 .context("Staking contract not found")?;
             let staking_contract = StakingContract(&staking_contract);
 
@@ -77,7 +76,11 @@ impl Staking {
                 .context("Failed to get current relay round address")?;
 
             // Get all info from current relay round contract
-            let relay_round_details = match shard_accounts.find_account(&relay_round_address)? {
+            let relay_round_details = match ctx
+                .ton_subscriber
+                .get_contract_state(&relay_round_address)
+                .await?
+            {
                 Some(contract) => RelayRoundContract(&contract)
                     .get_details()
                     .context("Failed to get relay round details")?,
@@ -98,45 +101,33 @@ impl Staking {
                 .get_user_data_address(&ctx.staker_account)
                 .context("User data account not found")?;
 
-            break (
-                shard_accounts,
-                relay_round_details,
-                relay_round_state,
-                user_data_account,
-            );
+            break (relay_round_details, relay_round_state, user_data_account);
         };
 
         let participates_in_round = relay_round_details
             .staker_addrs
             .contains(&ctx.staker_account);
 
-        let user_data_contract = shard_accounts
-            .find_account(&user_data_account)?
+        let user_data_contract = ctx
+            .ton_subscriber
+            .get_contract_state(&user_data_account)
+            .await?
             .context("User data account not found")?;
         let user_data_balance = UserDataContract(&user_data_contract)
             .get_details()
             .context("Failed to get user data details")?
             .token_balance;
 
-        let check_elected = |elections_account_address: &UInt256| -> anyhow::Result<bool> {
-            let elections_contract = shard_accounts
-                .find_account(elections_account_address)?
-                .context("Next elections contract not found")?;
-            let elections_contract = ElectionsContract(&elections_contract);
-            Ok(elections_contract
-                .staker_addrs()
-                .context("Failed to get staker addresses from next elections contract")?
-                .contains(&ctx.staker_account))
-        };
-
         let (should_vote, elected) = match &relay_round_state.elections_state {
             ElectionsState::NotStarted { .. } => (false, None),
             ElectionsState::Started { .. } => {
-                let elected = check_elected(&relay_round_state.next_elections_account)?;
+                let elected =
+                    Self::check_elected(&relay_round_state.next_elections_account, &ctx).await?;
                 (!ctx.settings.ignore_elections && !elected, Some(elected))
             }
             ElectionsState::Finished => {
-                let elected = check_elected(&relay_round_state.next_elections_account)?;
+                let elected =
+                    Self::check_elected(&relay_round_state.next_elections_account, &ctx).await?;
                 (false, Some(elected))
             }
         };
@@ -184,10 +175,12 @@ impl Staking {
         let context = &staking.context;
         context
             .ton_subscriber
-            .add_transactions_subscription([staking_account], &staking.staking_observer);
+            .add_transactions_subscription([staking_account], &staking.staking_observer)
+            .await;
         context
             .ton_subscriber
-            .add_transactions_subscription([user_data_account], &staking.user_data_observer);
+            .add_transactions_subscription([user_data_account], &staking.user_data_observer)
+            .await;
 
         if should_vote {
             tokio::select! {
@@ -203,6 +196,22 @@ impl Staking {
         staking.collect_all_unclaimed_reward().await?;
 
         Ok(staking)
+    }
+
+    async fn check_elected(
+        elections_account_address: &UInt256,
+        ctx: &EngineContext,
+    ) -> Result<bool> {
+        let elections_contract = ctx
+            .ton_subscriber
+            .get_contract_state(elections_account_address)
+            .await?
+            .context("Next elections contract not found")?;
+        let elections_contract = ElectionsContract(&elections_contract);
+        Ok(elections_contract
+            .staker_addrs()
+            .context("Failed to get staker addresses from next elections contract")?
+            .contains(&ctx.staker_account))
     }
 
     pub fn metrics(&self) -> StakingMetrics {
@@ -221,58 +230,12 @@ impl Staking {
     #[tracing::instrument(skip(self))]
     async fn collect_all_unclaimed_reward(self: &Arc<Self>) -> Result<()> {
         tracing::info!("searching for the staking account");
-        let shard_accounts = self.context.get_all_shard_accounts().await?;
-        let staking_contract = shard_accounts
-            .find_account(&self.staking_account)?
+        let ton_subscriber = &self.context.ton_subscriber;
+        let staking_contract = ton_subscriber
+            .get_contract_state(&self.staking_account)
+            .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
-
-        let try_collect_reward = |relay_round: u32| -> Result<()> {
-            let relay_round_address = staking_contract
-                .get_relay_round_address(relay_round)
-                .context("Failed to compute relay round address")?;
-
-            let relay_round_contract = match shard_accounts.find_account(&relay_round_address) {
-                Ok(Some(contract)) => contract,
-                Ok(None) => {
-                    tracing::warn!(relay_round, "relay round not found");
-                    return Ok(());
-                }
-                Err(e) => {
-                    tracing::warn!(relay_round, "failed to find relay round: {e:?}");
-                    return Ok(());
-                }
-            };
-            let relay_round_contract = RelayRoundContract(&relay_round_contract);
-
-            // Check if staker has unclaimed reward
-            match relay_round_contract.has_unclaimed_reward(self.context.staker_account) {
-                Ok(true) => { /* continue */ }
-                Ok(false) => return Ok(()),
-                Err(e) => {
-                    tracing::warn!(relay_round, "failed to check unclaimed reward: {e:?}");
-                }
-            };
-
-            // Get end time and collect reward
-            match relay_round_contract.end_time() {
-                Ok(end_time) => {
-                    let staking = self.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = staking
-                            .get_reward_for_relay_round(relay_round, end_time)
-                            .await
-                        {
-                            tracing::error!(relay_round, "failed to collect reward: {e:?}");
-                        }
-                    });
-                }
-                Err(e) => {
-                    tracing::warn!(relay_round, "failed to check round end time: {e:?}");
-                }
-            };
-            Ok(())
-        };
 
         let current_round = staking_contract
             .get_relay_rounds_details()
@@ -283,9 +246,66 @@ impl Staking {
 
         for relay_round in (oldest_relay_round..=current_round).rev() {
             tracing::info!(relay_round, "collecting reward for an old relay round");
-            try_collect_reward(relay_round)?;
+            self.try_collect_reward(relay_round, &staking_contract)
+                .await?;
         }
 
+        Ok(())
+    }
+
+    async fn try_collect_reward(
+        self: &Arc<Self>,
+        relay_round: u32,
+        staking_contract: &StakingContract<'_>,
+    ) -> Result<()> {
+        let relay_round_address = staking_contract
+            .get_relay_round_address(relay_round)
+            .context("Failed to compute relay round address")?;
+
+        let relay_round_contract = match self
+            .context
+            .ton_subscriber
+            .get_contract_state(&relay_round_address)
+            .await
+        {
+            Ok(Some(contract)) => contract,
+            Ok(None) => {
+                tracing::warn!(relay_round, "relay round not found");
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!(relay_round, "failed to find relay round: {e:?}");
+                return Ok(());
+            }
+        };
+        let relay_round_contract = RelayRoundContract(&relay_round_contract);
+
+        // Check if staker has unclaimed reward
+        match relay_round_contract.has_unclaimed_reward(self.context.staker_account) {
+            Ok(true) => { /* continue */ }
+            Ok(false) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(relay_round, "failed to check unclaimed reward: {e:?}");
+            }
+        };
+
+        // Get end time and collect reward
+        match relay_round_contract.end_time() {
+            Ok(end_time) => {
+                let staking = self.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = staking
+                        .get_reward_for_relay_round(relay_round, end_time)
+                        .await
+                    {
+                        tracing::error!(relay_round, "failed to collect reward: {e:?}");
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::warn!(relay_round, "failed to check round end time: {e:?}");
+            }
+        };
         Ok(())
     }
 
@@ -666,9 +686,10 @@ impl Staking {
 
     /// Checks whether this relay is in current relay round
     async fn update_participates_in_round_status(&self) -> Result<()> {
-        let shard_accounts = self.context.get_all_shard_accounts().await?;
-        let staking_contract = shard_accounts
-            .find_account(&self.staking_account)?
+        let ton_subscriber = &self.context.ton_subscriber;
+        let staking_contract = ton_subscriber
+            .get_contract_state(&self.staking_account)
+            .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
 
@@ -679,8 +700,9 @@ impl Staking {
         let relay_round_address = staking_contract
             .get_relay_round_address(relay_rounds_details.current_relay_round)
             .context("Failed to compute relay round address")?;
-        let relay_round_contract = shard_accounts
-            .find_account(&relay_round_address)?
+        let relay_round_contract = ton_subscriber
+            .get_contract_state(&relay_round_address)
+            .await?
             .context("Current relay round contract not found")?;
         let relay_round_contract = RelayRoundContract(&relay_round_contract);
 
@@ -714,15 +736,17 @@ struct CurrentRelayRound {
 impl EngineContext {
     /// Ensures that TON pubkey and ETH address are confirmed in UserData
     async fn ensure_user_data_confirmed(self: &Arc<Self>, staking_account: UInt256) -> Result<()> {
-        let shard_accounts = self.get_all_shard_accounts().await?;
-        let staking_contract = shard_accounts
-            .find_account(&staking_account)?
+        let staking_contract = self
+            .ton_subscriber
+            .get_contract_state(&staking_account)
+            .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
 
         // Get bridge ETH event configuration
-        let bridge_event_configuration =
-            staking_contract.get_eth_bridge_configuration_details(&shard_accounts)?;
+        let bridge_event_configuration = staking_contract
+            .get_eth_bridge_configuration_details(&self.ton_subscriber)
+            .await?;
         tracing::info!(
             ?bridge_event_configuration,
             "found bridge event configuration"
@@ -731,8 +755,10 @@ impl EngineContext {
         // Initialize user data
         let user_data_account = staking_contract.get_user_data_address(&self.staker_account)?;
         tracing::info!(account = %DisplayAddr(user_data_account), "found user data account");
-        let user_data_contract = shard_accounts
-            .find_account(&user_data_account)?
+        let user_data_contract = self
+            .ton_subscriber
+            .get_contract_state(&user_data_account)
+            .await?
             .context("User data account not found")?;
         let user_data_contract = UserDataContract(&user_data_contract);
 
@@ -825,7 +851,8 @@ impl UserDataContract<'_> {
 
         context
             .ton_subscriber
-            .add_transactions_subscription([user_data_account], &user_data_observer);
+            .add_transactions_subscription([user_data_account], &user_data_observer)
+            .await;
 
         if details.ton_pubkey_confirmed {
             ton_pubkey_confirmed_notify.notify_waiters();
@@ -877,15 +904,16 @@ impl UserDataContract<'_> {
 
 impl<'a> StakingContract<'a> {
     /// Find bridge ETH event configuration
-    fn get_eth_bridge_configuration_details(
+    async fn get_eth_bridge_configuration_details(
         &self,
-        shard_accounts: &ShardAccountsMap,
+        ton_subscriber: &TonSubscriber,
     ) -> Result<EthTonEventConfigurationDetails> {
         let details = self
             .get_details()
             .context("Failed to get staking details")?;
-        let configuration_contract = shard_accounts
-            .find_account(&details.bridge_event_config_eth_ton)?
+        let configuration_contract = ton_subscriber
+            .get_contract_state(&details.bridge_event_config_eth_ton)
+            .await?
             .context("Bridge ETH event configuration not found")?;
 
         EthTonEventConfigurationContract(&configuration_contract)
@@ -1014,15 +1042,7 @@ impl ReadFromTransaction for (RoundState, StakingEvent) {
         });
         let res = res?;
 
-        let contract = match ctx.get_account_state() {
-            Ok(contract) => contract,
-            Err(e) => {
-                tracing::error!("failed to find account state after transaction: {e:?}");
-                return None;
-            }
-        };
-
-        match StakingContract(&contract).get_round_state() {
+        match StakingContract(ctx.account_state).get_round_state() {
             Ok(state) => Some((state, res)),
             Err(e) => {
                 tracing::error!("failed to get round state: {e:?}");

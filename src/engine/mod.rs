@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-#[cfg(feature = "double-broadcast")]
-use everscale_rpc_client::{jrpc::JrpcClient, Client, ClientOptions};
+use everscale_rpc_client::{ClientOptions, RpcClient};
 use parking_lot::Mutex;
 use pomfrit::formatter::*;
-use rustc_hash::FxHashMap;
 use tokio::sync::mpsc;
 use ton_block::Serializable;
-use ton_types::UInt256;
 
 use self::bridge::*;
 use self::eth_subscriber::*;
@@ -20,7 +17,6 @@ use self::staking::*;
 use self::ton_meta::*;
 use self::ton_subscriber::*;
 use crate::config::*;
-use crate::storage::*;
 use crate::utils::*;
 
 mod bridge;
@@ -45,13 +41,12 @@ pub struct Engine {
 impl Engine {
     pub async fn new(
         config: AppConfig,
-        global_config: ton_indexer::GlobalConfig,
         shutdown_requests_tx: ShutdownRequestsTx,
     ) -> Result<Arc<Self>> {
         let (metrics_exporter, metrics_writer) =
             pomfrit::create_exporter(config.metrics_settings.clone()).await?;
 
-        let context = EngineContext::new(config, global_config, shutdown_requests_tx).await?;
+        let context = EngineContext::new(config, shutdown_requests_tx).await?;
 
         let engine = Arc::new(Self {
             metrics_exporter,
@@ -95,8 +90,7 @@ impl Engine {
     }
 
     pub async fn start(self: &Arc<Self>) -> Result<()> {
-        // Sync node and subscribers
-        self.context.start().await?;
+        self.context.initialize().await?;
 
         // Fetch bridge configuration
         let bridge_account = only_account_hash(&self.context.settings.bridge_address);
@@ -107,6 +101,9 @@ impl Engine {
         #[cfg(not(feature = "disable-staking"))]
         // Staking
         self.initialize_staking(bridge_account).await?;
+
+        // Start
+        self.context.start()?;
 
         // EVM subscriber
         tracing::info!("starting ETH subscribers");
@@ -121,7 +118,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn initialize_bridge(self: &Arc<Self>, bridge_account: UInt256) -> Result<()> {
+    async fn initialize_bridge(self: &Arc<Self>, bridge_account: ton_types::UInt256) -> Result<()> {
         tracing::info!("initializing bridge...");
         let bridge = Bridge::new(self.context.clone(), bridge_account)
             .await
@@ -132,11 +129,14 @@ impl Engine {
     }
 
     #[cfg(not(feature = "disable-staking"))]
-    async fn initialize_staking(self: &Arc<Self>, bridge_account: UInt256) -> Result<()> {
+    async fn initialize_staking(
+        self: &Arc<Self>,
+        bridge_account: ton_types::UInt256,
+    ) -> Result<()> {
         let bridge_contract = match self
             .context
             .ton_subscriber
-            .get_contract_state(bridge_account)
+            .get_contract_state(&bridge_account)
             .await?
         {
             Some(contract) => contract,
@@ -174,29 +174,15 @@ pub struct EngineContext {
     pub keystore: Arc<KeyStore>,
     pub messages_queue: Arc<PendingMessagesQueue>,
     pub ton_subscriber: Arc<TonSubscriber>,
-    pub ton_engine: Arc<ton_indexer::Engine>,
     pub eth_subscribers: Arc<EthSubscriberRegistry>,
     pub sol_subscriber: Option<Arc<SolSubscriber>>,
-    pub persistent_storage: Arc<PersistentStorage>,
-    pub runtime_storage: Arc<RuntimeStorage>,
     #[cfg(feature = "ton")]
     pub tokens_meta_client: TokenMetaClient,
-    #[cfg(feature = "double-broadcast")]
-    pub jrpc_client: JrpcClient,
-}
-
-impl Drop for EngineContext {
-    fn drop(&mut self) {
-        self.ton_engine.shutdown();
-    }
+    pub rpc_client: RpcClient,
 }
 
 impl EngineContext {
-    async fn new(
-        config: AppConfig,
-        global_config: ton_indexer::GlobalConfig,
-        shutdown_requests_tx: ShutdownRequestsTx,
-    ) -> Result<Arc<Self>> {
+    async fn new(config: AppConfig, shutdown_requests_tx: ShutdownRequestsTx) -> Result<Arc<Self>> {
         let staker_account =
             ton_types::UInt256::from_be_bytes(&config.staker_address.address().get_bytestring(0));
         let staker_account_str = config.staker_address.to_string();
@@ -205,28 +191,13 @@ impl EngineContext {
         let keystore = KeyStore::new(&settings.keys_path, config.master_password)
             .context("Failed to create keystore")?;
 
-        let runtime_storage = Arc::new(RuntimeStorage::default());
+        let rpc_client =
+            RpcClient::new(settings.rpc_endpoints.clone(), ClientOptions::default()).await?;
+
         let messages_queue = PendingMessagesQueue::new(16);
-        let persistent_storage = Arc::new(PersistentStorage::new(&config.storage)?);
-        let ton_subscriber = TonSubscriber::new(
-            messages_queue.clone(),
-            persistent_storage.clone(),
-            runtime_storage.clone(),
-        );
+        let ton_subscriber = TonSubscriber::new(messages_queue.clone(), rpc_client.clone());
         #[cfg(feature = "ton")]
         let tokens_meta_client = TokenMetaClient::new(&settings.token_meta_base_url);
-
-        let ton_engine = ton_indexer::Engine::new(
-            config
-                .node_settings
-                .build_indexer_config()
-                .await
-                .context("Failed to build node config")?,
-            global_config,
-            ton_subscriber.clone(),
-        )
-        .await
-        .context("Failed to start TON node")?;
 
         let eth_subscribers = EthSubscriberRegistry::new(settings.evm_networks.clone())
             .await
@@ -244,10 +215,6 @@ impl EngineContext {
             }
         };
 
-        #[cfg(feature = "double-broadcast")]
-        let jrpc_client =
-            JrpcClient::new(settings.jrpc_endpoints.clone(), ClientOptions::default()).await?;
-
         Ok(Arc::new(Self {
             shutdown_requests_tx,
             staker_account_str,
@@ -256,41 +223,22 @@ impl EngineContext {
             keystore,
             messages_queue,
             ton_subscriber,
-            ton_engine,
             eth_subscribers,
             sol_subscriber,
-            persistent_storage,
-            runtime_storage,
             #[cfg(feature = "ton")]
             tokens_meta_client,
-            #[cfg(feature = "double-broadcast")]
-            jrpc_client,
+            rpc_client,
         }))
     }
 
-    async fn start(&self) -> Result<()> {
-        self.ton_engine.start().await?;
-        self.ton_subscriber.start(&self.ton_engine).await?;
+    async fn initialize(&self) -> Result<()> {
+        self.ton_subscriber
+            .initialize(&self.rpc_client.get_keyblock().await?)?;
         Ok(())
     }
 
-    pub async fn get_all_shard_accounts(&self) -> Result<ShardAccountsMap> {
-        let shard_blocks = self.ton_subscriber.wait_shards(None).await?.block_ids;
-
-        let mut shard_accounts =
-            FxHashMap::with_capacity_and_hasher(shard_blocks.len(), Default::default());
-        for (shard_ident, block_id) in shard_blocks {
-            let shard = self.ton_engine.wait_state(&block_id, None, false).await?;
-            shard_accounts.insert(
-                shard_ident,
-                ShardAccounts {
-                    items: shard.state().read_accounts()?,
-                    handle: shard.ref_mc_state_handle().clone(),
-                },
-            );
-        }
-
-        Ok(shard_accounts)
+    fn start(&self) -> Result<()> {
+        self.ton_subscriber.start()
     }
 
     pub async fn send_ton_message(
@@ -299,26 +247,14 @@ impl EngineContext {
         message: &ton_block::Message,
         expire_at: u32,
     ) -> Result<MessageStatus> {
-        let to = match message.header() {
-            ton_block::CommonMsgInfo::ExtInMsgInfo(header) => header.dst.workchain_id(),
-            _ => return Err(EngineError::ExternalTonMessageExpected.into()),
-        };
-
         let cells = message.write_to_new_cell()?.into_cell()?;
-        let serialized = ton_types::serialize_toc(&cells)?;
 
         let rx = self
             .messages_queue
             .add_message(*account, cells.repr_hash(), expire_at)?;
 
-        if let Err(e) = self.ton_engine.broadcast_external_message(to, &serialized) {
+        if let Err(e) = self.rpc_client.broadcast_message(message.clone()).await {
             tracing::warn!("Failed broadcasting message: {e}");
-        }
-
-        #[cfg(feature = "double-broadcast")]
-        {
-            tracing::warn!("Duplicating external message broadcasting via JRPC");
-            self.jrpc_client.broadcast_message(message.clone()).await?;
         }
 
         let status = rx.await?;
@@ -493,45 +429,12 @@ struct LabeledTonSubscriberMetrics<'a>(&'a EngineContext);
 
 impl std::fmt::Display for LabeledTonSubscriberMetrics<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use std::sync::atomic::Ordering;
-
         let metrics = self.0.ton_subscriber.metrics();
-        let indexer_metrics = self.0.ton_engine.metrics();
-
-        f.begin_metric("ton_subscriber_ready")
-            .label(LABEL_STAKER, &self.0.staker_account_str)
-            .value(metrics.ready as u8)?;
 
         if metrics.current_utime > 0 {
-            let mc_time_diff = indexer_metrics.mc_time_diff.load(Ordering::Acquire);
-            let shard_client_time_diff = indexer_metrics
-                .shard_client_time_diff
-                .load(Ordering::Acquire);
-
-            let last_mc_block_seqno = indexer_metrics.last_mc_block_seqno.load(Ordering::Acquire);
-            let last_shard_client_mc_block_seqno = indexer_metrics
-                .last_shard_client_mc_block_seqno
-                .load(Ordering::Acquire);
-
             f.begin_metric("ton_subscriber_current_utime")
                 .label(LABEL_STAKER, &self.0.staker_account_str)
                 .value(metrics.current_utime)?;
-
-            f.begin_metric("ton_subscriber_time_diff")
-                .label(LABEL_STAKER, &self.0.staker_account_str)
-                .value(mc_time_diff)?;
-
-            f.begin_metric("ton_subscriber_shard_client_time_diff")
-                .label(LABEL_STAKER, &self.0.staker_account_str)
-                .value(shard_client_time_diff)?;
-
-            f.begin_metric("ton_subscriber_mc_block_seqno")
-                .label(LABEL_STAKER, &self.0.staker_account_str)
-                .value(last_mc_block_seqno)?;
-
-            f.begin_metric("ton_subscriber_shard_client_mc_block_seqno")
-                .label(LABEL_STAKER, &self.0.staker_account_str)
-                .value(last_shard_client_mc_block_seqno)?;
         }
 
         f.begin_metric("ton_subscriber_pending_message_count")
@@ -586,11 +489,9 @@ const LABEL_CHAIN_ID: &str = "chain_id";
 pub type ShutdownRequestsRx = mpsc::UnboundedReceiver<()>;
 pub type ShutdownRequestsTx = mpsc::UnboundedSender<()>;
 
+#[cfg(not(feature = "disable-staking"))]
 #[derive(thiserror::Error, Debug)]
 enum EngineError {
-    #[error("External ton message expected")]
-    ExternalTonMessageExpected,
-    #[cfg(not(feature = "disable-staking"))]
     #[error("Bridge account not found")]
     BridgeAccountNotFound,
 }
