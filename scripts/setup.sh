@@ -102,7 +102,6 @@ fi
 
 echo "INFO: preparing environment"
 sudo mkdir -p /etc/relay
-sudo mkdir -p /var/db/relay
 if [[ -f "$config_path" ]]; then
   echo "WARN: $config_path already exists"
 else
@@ -116,7 +115,6 @@ echo 'INFO: done'
 echo ''
 echo 'INFO: Systemd service: relay'
 echo '      Keys and configs: /etc/relay'
-echo '      Node DB and stuff: /var/db/relay'
 echo ''
 echo 'NOTE: replace all "${..}" variables in /etc/relay/config.yaml'
 echo '      or specify them in /etc/systemd/system/relay.service'

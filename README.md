@@ -33,8 +33,7 @@ NOTE: scripts are prepared and tested on **Ubuntu 20.04**. You may need to modif
      ```
      Not recommended for machines with lower specs than required
 
-   > At this stage, a systemd service `relay` is created. Configs and keys will be in `/etc/relay` and
-   > Everscale node DB will be in `/var/db/relay`.
+   > At this stage, a systemd service `relay` is created. Configs and keys will be in `/etc/relay`.
 
    **Do not start this service yet!**
 
@@ -228,8 +227,6 @@ bridge_settings:
       poll_interval_sec: 60
       maximum_failed_responses_time_sec: 604800
       max_block_range: 5000
-storage:
-  persistent_db_path: "/var/db/relay-events"
 metrics_settings:
   # Listen address of metrics. Used by the client to gather prometheus metrics.
   # Default: "127.0.0.1:10000"

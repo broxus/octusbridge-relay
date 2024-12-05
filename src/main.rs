@@ -85,8 +85,6 @@ impl CmdRun {
                     if let Ok(signal) = signal {
                         tracing::warn!(?signal, "received termination signal, flushing state");
                     }
-                    // NOTE: engine future is safely dropped here so rocksdb method
-                    // `rocksdb_close` is called in DB object destructor
                     Ok(())
                 }
             }

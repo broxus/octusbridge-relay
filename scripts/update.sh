@@ -9,7 +9,6 @@ function print_help() {
   echo ''
   echo 'Options:'
   echo '  -h,--help         Print this help message and exit'
-  echo '  -f,--force        Clear "/var/db/relay" on update'
   echo '  -s,--sync         Restart "timesyncd" service'
   echo '  -r,--reset-adnl   Generate new ADNL keys'
   echo '  -t,--type TYPE    One of two types of installation:'
@@ -20,7 +19,6 @@ function print_help() {
   echo '                             specs than required.'
 }
 
-force="false"
 restart_timesyncd="false"
 reset_adnl="false"
 while [[ $# -gt 0 ]]; do
@@ -29,10 +27,6 @@ while [[ $# -gt 0 ]]; do
       -h|--help)
         print_help
         exit 0
-      ;;
-      -f|--force)
-        force="true"
-        shift # past argument
       ;;
       -s|--sync)
         restart_timesyncd="true"
@@ -72,13 +66,6 @@ fi
 echo "INFO: stopping relay service"
 sudo systemctl stop relay
 
-if [[ "$force" == "true" ]]; then
-  echo "INFO: removing relay db"
-  sudo rm -rf /var/db/relay
-else
-  echo 'INFO: skipping "/var/db/relay" deletion'
-fi
-
 if [[ "$setup_type" == "native" ]]; then
   echo 'INFO: running update for native installation'
 
@@ -104,9 +91,6 @@ else
   exit 1
 fi
 
-echo "INFO: preparing environment"
-sudo mkdir -p /var/db/relay
-
 if [[ "$restart_timesyncd" == "true" ]]; then
   echo 'INFO: restarting timesyncd'
   sudo systemctl restart systemd-timesyncd.service
@@ -124,5 +108,4 @@ echo 'INFO: done'
 echo ''
 echo 'INFO: Systemd service: relay'
 echo '      Keys and configs: /etc/relay'
-echo '      Node DB and stuff: /var/db/relay'
 echo ''
