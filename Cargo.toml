@@ -69,6 +69,7 @@ solana-transaction-status = { git = 'https://github.com/broxus/solana', branch =
 ton_block = { git = "https://github.com/broxus/ton-labs-block" }
 ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types" }
+ton_executor = { git = "https://github.com/broxus/ton-labs-executor" }
 
 eth-ton-abi-converter = { git = "https://github.com/broxus/eth-ton-abi-converter.git" }
 

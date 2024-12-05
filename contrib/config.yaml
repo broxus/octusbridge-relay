@@ -4,10 +4,11 @@ master_password: "${RELAY_MASTER_KEY}"
 # Your address from which you specified keys
 staker_address: "${RELAY_STAKER_ADDRESS}"
 bridge_settings:
+  rpc_endpoints: ["https://rpc-testnet.tychoprotocol.com/"]
   # Keystore data path
   keys_path: "/etc/relay/keys.json"
   # Bridge contract address
-  bridge_address: "0:1d51fb47566d0d283ebbf83c641c01ebebaad6c3cec55895b0074b802036094e"
+  bridge_address: "0:16c43aee96a19ad89066d4e8ec3929c202006499f54c5ad63627a0dadca91b11"
   # If set, relay will not participate in elections. Default: false
   ignore_elections: false
   # EVM network configs

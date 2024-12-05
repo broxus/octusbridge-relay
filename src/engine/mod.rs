@@ -232,8 +232,8 @@ impl EngineContext {
     }
 
     async fn initialize(&self) -> Result<()> {
-        self.ton_subscriber
-            .initialize(&self.rpc_client.get_keyblock().await?)?;
+        let blockchain_config = self.rpc_client.get_blockchain_config().await?;
+        self.ton_subscriber.initialize(&blockchain_config)?;
         Ok(())
     }
 

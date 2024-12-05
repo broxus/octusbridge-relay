@@ -18,10 +18,8 @@ use crate::utils::*;
 const POLLING_INTERVAL_SECS: u64 = 3;
 const POOL_SIZE: usize = 15;
 
-// TODO: do we need to update signature_id once in a while
 pub struct TonSubscriber {
     current_utime: AtomicU32,
-    start_block_lt: AtomicU64,
     signature_id: SignatureId,
     account_subscriptions: Mutex<FxHashMap<UInt256, AccountSubscription>>,
     polling_interval: Duration,
@@ -34,7 +32,6 @@ impl TonSubscriber {
     pub fn new(messages_queue: Arc<PendingMessagesQueue>, rpc_client: RpcClient) -> Arc<Self> {
         Arc::new(Self {
             current_utime: Default::default(),
-            start_block_lt: Default::default(),
             signature_id: SignatureId::default(),
             account_subscriptions: Mutex::new(FxHashMap::with_capacity_and_hasher(
                 128,
@@ -55,10 +52,12 @@ impl TonSubscriber {
         }
     }
 
-    pub fn initialize(self: &Arc<Self>, last_key_block: &ton_block::Block) -> Result<()> {
+    pub fn initialize(
+        self: &Arc<Self>,
+        blockchain_config: &ton_executor::BlockchainConfig,
+    ) -> Result<()> {
         tracing::info!("starting ton subscriber");
-        self.update_signature_id(last_key_block)?;
-        self.set_start_block_lt(last_key_block)?;
+        self.update_signature_id(blockchain_config)?;
         tracing::info!("ton subscriber started");
 
         Ok(())
@@ -106,8 +105,9 @@ impl TonSubscriber {
         for account in accounts {
             match state_subscriptions.entry(account) {
                 hash_map::Entry::Vacant(entry) => {
+                    let latest_lt = self.get_latest_lt_for_account(&account).await;
                     entry.insert(AccountSubscription {
-                        latest_lt: self.get_start_block_lt().into(),
+                        latest_lt: latest_lt.into(),
                         transaction_subscriptions: vec![weak.clone()],
                     });
                 }
@@ -115,6 +115,44 @@ impl TonSubscriber {
                     entry.get_mut().transaction_subscriptions.push(weak.clone());
                 }
             };
+        }
+    }
+
+    async fn get_latest_lt_for_account(&self, account: &UInt256) -> u64 {
+        self.get_contract_state_with_retry(account, 5)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.last_transaction_id.lt())
+            .unwrap_or_default()
+    }
+
+    pub async fn get_contract_state_with_retry(
+        &self,
+        account: &UInt256,
+        max_retries: u32,
+    ) -> Result<Option<ExistingContract>> {
+        let mut attempt = 0;
+
+        loop {
+            match self.get_contract_state(account).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= max_retries {
+                        return Err(e);
+                    } else {
+                        let delay_between_retries = Duration::from_secs(5);
+                        tracing::warn!(
+                            attempt = attempt,
+                            delay_secs = delay_between_retries.as_secs(),
+                            error = e.to_string(),
+                            "Retrying to get contract state..."
+                        );
+                        tokio::time::sleep(delay_between_retries).await;
+                    }
+                }
+            }
         }
     }
 
@@ -292,39 +330,17 @@ impl TonSubscriber {
         Ok(())
     }
 
-    fn get_start_block_lt(&self) -> u64 {
-        self.start_block_lt.load(Ordering::Acquire)
-    }
-
-    fn set_start_block_lt(&self, key_block: &ton_block::Block) -> Result<()> {
-        let block_info = key_block.info.read_struct()?;
-        let start_block_lt = block_info.end_lt();
-        self.start_block_lt.store(start_block_lt, Ordering::Release);
-
-        Ok(())
-    }
-
     #[cfg(not(feature = "ton"))]
-    fn update_signature_id(&self, key_block: &ton_block::Block) -> Result<()> {
-        use anyhow::Context;
-
-        let extra = key_block.read_extra()?;
-        let custom = extra
-            .read_custom()?
-            .context("McBlockExtra not found in the masterchain block")?;
-        let config = custom
-            .config()
-            .context("Config not found in the key block")?;
-
+    fn update_signature_id(&self, config: &ton_executor::BlockchainConfig) -> Result<()> {
         self.signature_id
-            .store(config.capabilities(), key_block.global_id);
+            .store(config.capabilites(), config.global_id());
 
         Ok(())
     }
 
     #[cfg(feature = "ton")]
-    fn update_signature_id(&self, key_block: &ton_block::Block) -> Result<()> {
-        self.signature_id.store(0x0, key_block.global_id);
+    fn update_signature_id(&self, config: &ton_executor::BlockchainConfig) -> Result<()> {
+        self.signature_id.store(0x0, config.global_id());
 
         Ok(())
     }
