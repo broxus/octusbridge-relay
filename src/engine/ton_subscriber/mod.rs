@@ -316,7 +316,10 @@ impl TonSubscriber {
             .await;
 
         for (account, subscription) in subscriptions.iter() {
-            let (account_state, transactions) = transactions_map.get(account).trust_me();
+            let Some((account_state, transactions)) = transactions_map.get(account) else {
+                tracing::error!(address = %DisplayAddr(account), "Failed to retrieve transactions");
+                continue;
+            };
             if let Err(e) = subscription.process_transactions(
                 &self.messages_queue,
                 account_state,
