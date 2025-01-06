@@ -57,7 +57,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_api() {
-        let client = TokenMetaClient::new("https://ton-tokens-api.bf.works");
+        let client = TokenMetaClient::new("https://ton-tokens-api.broxus.com");
         let meta = client
             .get_token_meta("0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe")
             .await
