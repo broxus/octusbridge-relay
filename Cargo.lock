@@ -5976,7 +5976,7 @@ dependencies = [
 [[package]]
 name = "ton_vm"
 version = "1.8.29"
-source = "git+https://github.com/broxus/ton-labs-vm.git#41a85bcde18bc524c18448ffc6aea35aa383c54a"
+source = "git+https://www.github.com/broxus/ton-labs-vm?branch=feature%2Fjetton#e4ccbb7a6e90fa30c7ee55b85f2b9ad8be1518d2"
 dependencies = [
  "anyhow",
  "ed25519 1.5.3",
