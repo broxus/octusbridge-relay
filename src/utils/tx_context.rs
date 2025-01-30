@@ -27,6 +27,7 @@ pub struct TxContext<'a> {
     pub transaction_info: &'a ton_block::TransactionDescrOrdinary,
     pub transaction: &'a ton_block::Transaction,
     pub in_msg: &'a ton_block::Message,
+    pub gas_price: u64,
 }
 
 impl TxContext<'_> {

@@ -18,9 +18,12 @@ use crate::utils::*;
 const POLLING_INTERVAL_SECS: u64 = 3;
 const POOL_SIZE: usize = 15;
 
+const DEFAULT_GAS_PRICE: u64 = 60_000;
+
 pub struct TonSubscriber {
     current_utime: AtomicU32,
     signature_id: SignatureId,
+    gas_price: AtomicU64,
     account_subscriptions: Mutex<FxHashMap<UInt256, AccountSubscription>>,
     polling_interval: Duration,
     pool: Semaphore,
@@ -33,6 +36,7 @@ impl TonSubscriber {
         Arc::new(Self {
             current_utime: Default::default(),
             signature_id: SignatureId::default(),
+            gas_price: DEFAULT_GAS_PRICE.into(),
             account_subscriptions: Mutex::new(FxHashMap::with_capacity_and_hasher(
                 128,
                 Default::default(),
@@ -58,6 +62,7 @@ impl TonSubscriber {
     ) -> Result<()> {
         tracing::info!("starting ton subscriber");
         self.update_signature_id(blockchain_config)?;
+        self.update_gas_price(blockchain_config)?;
         tracing::info!("ton subscriber started");
 
         Ok(())
@@ -87,6 +92,10 @@ impl TonSubscriber {
 
     pub fn current_utime(&self) -> u32 {
         self.current_utime.load(Ordering::Acquire)
+    }
+
+    pub fn gas_price(&self) -> u64 {
+        self.gas_price.load(Ordering::Acquire)
     }
 
     pub fn signature_id(&self) -> Option<i32> {
@@ -325,11 +334,20 @@ impl TonSubscriber {
                 account_state,
                 &mut transactions.clone(),
                 account,
+                self.gas_price(),
             ) {
                 tracing::error!(address = %DisplayAddr(account), "Failed to process transactions: {e:?}");
             }
         }
 
+        Ok(())
+    }
+
+    fn update_gas_price(&self, config: &ton_executor::BlockchainConfig) -> Result<()> {
+        let gas_price = config.get_gas_config(false).gas_price / 2_u64.pow(16);
+
+        tracing::info!("using gas price: {gas_price}");
+        self.gas_price.store(gas_price, Ordering::Release);
         Ok(())
     }
 
@@ -383,6 +401,7 @@ impl AccountSubscription {
         account_state: &ExistingContract,
         transactions: &mut [ton_block::Transaction],
         account: &UInt256,
+        gas_price: u64,
     ) -> Result<()> {
         if self.transaction_subscriptions.is_empty() {
             return Ok(());
@@ -419,6 +438,7 @@ impl AccountSubscription {
                 transaction_info: &transaction_info,
                 transaction,
                 in_msg: &in_msg,
+                gas_price,
             };
 
             // Handle transaction
