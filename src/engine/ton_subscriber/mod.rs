@@ -18,7 +18,11 @@ use crate::utils::*;
 const POLLING_INTERVAL_SECS: u64 = 3;
 const POOL_SIZE: usize = 15;
 
+#[cfg(not(feature = "ton"))]
 const DEFAULT_GAS_PRICE: u64 = 60_000;
+
+#[cfg(feature = "ton")]
+const DEFAULT_GAS_PRICE: u64 = 1_000;
 
 pub struct TonSubscriber {
     current_utime: AtomicU32,
@@ -62,6 +66,7 @@ impl TonSubscriber {
     ) -> Result<()> {
         tracing::info!("starting ton subscriber");
         self.update_signature_id(blockchain_config)?;
+        #[cfg(not(feature = "ton"))]
         self.update_gas_price(blockchain_config)?;
         tracing::info!("ton subscriber started");
 
@@ -343,6 +348,7 @@ impl TonSubscriber {
         Ok(())
     }
 
+    #[cfg(not(feature = "ton"))]
     fn update_gas_price(&self, config: &ton_executor::BlockchainConfig) -> Result<()> {
         let gas_price = config.get_gas_config(false).gas_price / 2_u64.pow(16);
 
