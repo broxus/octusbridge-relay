@@ -672,7 +672,6 @@ impl Bridge {
         // Check further steps based on event statuses
         match base_event_contract.process(
             self.context.keystore.ton.public_key(),
-            ton_subscriber.gas_price(),
             T::REQUIRE_ALL_SIGNATURES,
         )? {
             // Event was not activated yet, so it will be processed in
@@ -703,11 +702,7 @@ impl Bridge {
         // Wait contract state
         let contract = ton_subscriber.wait_contract_state(&account).await?;
 
-        match EventBaseContract(&contract).process(
-            keystore.ton.public_key(),
-            ton_subscriber.gas_price(),
-            false,
-        )? {
+        match EventBaseContract(&contract).process(keystore.ton.public_key(), false)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
                 self.eth_ton_events_state.remove(&account);
@@ -905,11 +900,7 @@ impl Bridge {
         let base_event_contract = EventBaseContract(&contract);
 
         // Check further steps based on event statuses
-        match base_event_contract.process(
-            keystore.ton.public_key(),
-            ton_subscriber.gas_price(),
-            true,
-        )? {
+        match base_event_contract.process(keystore.ton.public_key(), true)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
                 self.ton_eth_events_state.remove(&account);
@@ -1101,11 +1092,7 @@ impl Bridge {
         // Wait contract state
         let contract = ton_subscriber.wait_contract_state(&account).await?;
 
-        match EventBaseContract(&contract).process(
-            keystore.ton.public_key(),
-            ton_subscriber.gas_price(),
-            false,
-        )? {
+        match EventBaseContract(&contract).process(keystore.ton.public_key(), false)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
                 self.sol_ton_events_state.remove(&account);
@@ -1251,11 +1238,7 @@ impl Bridge {
         let base_event_contract = EventBaseContract(&contract);
 
         // Check further steps based on event statuses
-        match base_event_contract.process(
-            keystore.ton.public_key(),
-            ton_subscriber.gas_price(),
-            true,
-        )? {
+        match base_event_contract.process(keystore.ton.public_key(), true)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
                 self.ton_sol_events_state.remove(&account);
@@ -2199,11 +2182,9 @@ impl Bridge {
                 }
 
                 // Process event
-                match EventBaseContract(&contract).process(
-                    our_public_key,
-                    ton_subscriber.gas_price(),
-                    event_type == EventType::TonEth,
-                ) {
+                match EventBaseContract(&contract)
+                    .process(our_public_key, event_type == EventType::TonEth)
+                {
                     Ok(EventAction::Nop | EventAction::Vote) => match event_type {
                         EventType::EthTon => {
                             let configuration = check_configuration!(EthTonEventContract);
@@ -2702,12 +2683,7 @@ fn add_event_code_hash(
 
 impl EventBaseContract<'_> {
     /// Determine event action
-    fn process(
-        &self,
-        public_key: &UInt256,
-        gas_price: u64,
-        require_all_signatures: bool,
-    ) -> Result<EventAction> {
+    fn process(&self, public_key: &UInt256, require_all_signatures: bool) -> Result<EventAction> {
         const SUPPORTED_API_VERSION: u32 = 2;
 
         Ok(match self.status()? {
@@ -2723,8 +2699,7 @@ impl EventBaseContract<'_> {
             // Special case for TON->ETH event which must collect as much signatures as possible
             EventStatus::Confirmed
                 if require_all_signatures
-                    && self.0.account.storage.balance.grams.as_u128()
-                        >= MIN_EVENT_BALANCE_GAS_VALUE * gas_price as u128
+                    && self.0.account.storage.balance.grams.as_u128() > 0
                     && self.get_voters(EventVote::Empty)?.contains(public_key)
                     && self.get_api_version().unwrap_or_default() == SUPPORTED_API_VERSION =>
             {
@@ -3122,7 +3097,7 @@ impl ReadFromTransaction for TonEthEvent {
 
         if event.is_none() {
             let balance = ctx.account_state.account.storage.balance.grams;
-            if balance.as_u128() < MIN_EVENT_BALANCE_GAS_VALUE * ctx.gas_price as u128 {
+            if balance.as_u128() == 0 {
                 return Some(Self::Closed);
             }
         }
@@ -3230,7 +3205,7 @@ impl ReadFromTransaction for TonSolEvent {
 
         if event.is_none() {
             let balance = ctx.account_state.account.storage.balance.grams;
-            if balance.as_u128() < MIN_EVENT_BALANCE_GAS_VALUE * ctx.gas_price as u128 {
+            if balance.as_u128() == 0 {
                 return Some(Self::Closed);
             }
         }
@@ -3307,8 +3282,6 @@ fn parse_client_error(err: ClientError) -> anyhow::Error {
         _ => anyhow::Error::msg(format!("Solana Client error: {err}")),
     }
 }
-
-const MIN_EVENT_BALANCE_GAS_VALUE: u128 = 100_000; // * gasPrice
 
 type ConnectorState = Arc<AccountObserver<ConnectorEvent>>;
 
