@@ -1705,7 +1705,7 @@ checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 [[package]]
 name = "everscale-rpc-client"
 version = "0.6.1"
-source = "git+https://github.com/broxus/everscale-jrpc.git#23c7cdd90e1ac84405a697239f3384d0c89cec10"
+source = "git+https://github.com/broxus/everscale-jrpc.git#23da4bcc23efed9db5eb2fddb6e640588e0747c7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1735,7 +1735,7 @@ dependencies = [
 [[package]]
 name = "everscale-rpc-models"
 version = "0.1.0"
-source = "git+https://github.com/broxus/everscale-jrpc.git#23c7cdd90e1ac84405a697239f3384d0c89cec10"
+source = "git+https://github.com/broxus/everscale-jrpc.git#23da4bcc23efed9db5eb2fddb6e640588e0747c7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2721,7 +2721,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git#561b60e7a47e994500dce9f25933dd8d8fb2987a"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2751,7 +2751,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#561b60e7a47e994500dce9f25933dd8d8fb2987a"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -2772,16 +2772,17 @@ dependencies = [
  "ton_block",
  "ton_executor",
  "ton_types",
- "ton_vm",
+ "ton_vm 1.8.29 (git+https://github.com/broxus/ton-labs-vm.git?branch=feature%2Fjetton)",
 ]
 
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#561b60e7a47e994500dce9f25933dd8d8fb2987a"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "nekoton-abi",
+ "nekoton-jetton",
  "nekoton-utils",
  "once_cell",
  "serde",
@@ -2794,7 +2795,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#561b60e7a47e994500dce9f25933dd8d8fb2987a"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "either",
  "proc-macro2 1.0.69",
@@ -2803,9 +2804,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "nekoton-jetton"
+version = "0.13.0"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+dependencies = [
+ "anyhow",
+ "lazy_static",
+ "nekoton-utils",
+ "num-bigint 0.4.4",
+ "num-traits",
+ "serde",
+ "sha2 0.10.8",
+ "ton_abi",
+ "ton_block",
+ "ton_types",
+]
+
+[[package]]
 name = "nekoton-proto"
 version = "0.1.0"
-source = "git+https://github.com/broxus/nekoton.git#561b60e7a47e994500dce9f25933dd8d8fb2987a"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2817,7 +2835,7 @@ dependencies = [
 [[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#561b60e7a47e994500dce9f25933dd8d8fb2987a"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -5941,14 +5959,14 @@ dependencies = [
 [[package]]
 name = "ton_executor"
 version = "1.15.54"
-source = "git+https://github.com/broxus/ton-labs-executor#2a38890d53f9c3dad84b3fb9a58e3bb62ba20f44"
+source = "git+https://github.com/broxus/ton-labs-executor#1c63aa953462822397a3b50f260e294653e9caed"
 dependencies = [
  "anyhow",
  "log",
  "thiserror",
  "ton_block",
  "ton_types",
- "ton_vm",
+ "ton_vm 1.8.29 (git+https://github.com/broxus/ton-labs-vm.git)",
 ]
 
 [[package]]
@@ -5976,7 +5994,28 @@ dependencies = [
 [[package]]
 name = "ton_vm"
 version = "1.8.29"
-source = "git+https://www.github.com/broxus/ton-labs-vm?branch=feature%2Fjetton#e4ccbb7a6e90fa30c7ee55b85f2b9ad8be1518d2"
+source = "git+https://github.com/broxus/ton-labs-vm.git?branch=feature%2Fjetton#e4ccbb7a6e90fa30c7ee55b85f2b9ad8be1518d2"
+dependencies = [
+ "anyhow",
+ "ed25519 1.5.3",
+ "ed25519-dalek 1.0.1",
+ "hex",
+ "lazy_static",
+ "log",
+ "num 0.4.1",
+ "num-traits",
+ "rand 0.8.5",
+ "sha2 0.9.9",
+ "smallvec",
+ "thiserror",
+ "ton_block",
+ "ton_types",
+]
+
+[[package]]
+name = "ton_vm"
+version = "1.8.29"
+source = "git+https://github.com/broxus/ton-labs-vm.git#bf49d876d0d81fd4ad2b184d3620721465fc10c5"
 dependencies = [
  "anyhow",
  "ed25519 1.5.3",

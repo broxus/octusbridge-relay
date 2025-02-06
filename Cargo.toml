@@ -95,9 +95,6 @@ hmac-drbg = { git = "https://github.com/Rexagon/rust-hmac-drbg" }
 solana-program = { git = 'https://github.com/broxus/solana', branch = 'broxus' }
 solana-zk-token-sdk = { git = 'https://github.com/broxus/solana', branch = 'broxus' }
 
-[patch."https://github.com/broxus/ton-labs-vm.git"]
-ton_vm = { git = "https://www.github.com/broxus/ton-labs-vm", branch = "feature/jetton" }
-
 [package.metadata.deb]
 maintainer = "Broxus <hello@broxus.com>"
 copyright = "2022, Broxus <hello@broxus.com>"
