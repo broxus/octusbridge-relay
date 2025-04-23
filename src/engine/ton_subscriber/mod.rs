@@ -488,13 +488,13 @@ where
     fn handle_transaction(&self, ctx: TxContext<'_>) -> Result<()> {
         let event = T::read_from_transaction(&ctx);
 
-        tracing::info!(
-            account = %DisplayAddr(ctx.account),
-            "got transaction on account: {event:?}",
-        );
-
         // Send event to event manager if it exists
         if let Some(event) = event {
+            tracing::info!(
+                ?event,
+                account = %DisplayAddr(ctx.account),
+                "got transaction on account",
+            );
             if self.0.send((*ctx.account, event)).is_err() {
                 tracing::error!(
                     account = %DisplayAddr(ctx.account),
