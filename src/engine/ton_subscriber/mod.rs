@@ -58,6 +58,7 @@ impl TonSubscriber {
     ) -> Result<()> {
         tracing::info!("starting ton subscriber");
         self.update_signature_id(blockchain_config)?;
+        self.update_current_utime();
         tracing::info!("ton subscriber started");
 
         Ok(())
@@ -73,9 +74,7 @@ impl TonSubscriber {
     async fn start_polling(self: Arc<Self>) {
         tracing::info!("Starting polling");
         loop {
-            let current_utime = chrono::Utc::now().timestamp() as u32;
-
-            self.current_utime.store(current_utime, Ordering::Release);
+            self.update_current_utime();
 
             if let Err(err) = self.clone().poll_transactions().await {
                 tracing::error!("Error while polling transactions: {}", err);
@@ -330,7 +329,23 @@ impl TonSubscriber {
             }
         }
 
+        for (account, (_, transactions)) in transactions_map.iter() {
+            let minimal_transaction_utime = transactions
+                .iter()
+                .map(|t| t.now)
+                .min()
+                .unwrap_or(self.current_utime());
+            self.messages_queue
+                .update(account, minimal_transaction_utime);
+        }
+
         Ok(())
+    }
+
+    fn update_current_utime(&self) {
+        let current_utime = chrono::Utc::now().timestamp() as u32;
+
+        self.current_utime.store(current_utime, Ordering::Release);
     }
 
     #[cfg(not(feature = "ton"))]

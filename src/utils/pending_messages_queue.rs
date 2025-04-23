@@ -88,6 +88,33 @@ impl PendingMessagesQueue {
 
         self.min_expire_at.store(min_expire_at, Ordering::Release);
     }
+
+    pub fn update(&self, account: &UInt256, current_utime: u32) {
+        let current_min_expire_at = self.min_expire_at.load(Ordering::Acquire);
+        if current_utime <= current_min_expire_at {
+            return;
+        }
+
+        let mut min_expire_at: u32 = u32::MAX;
+
+        let mut entries = self.entries.lock();
+        entries.retain(|id, item| {
+            if current_utime <= item.expire_at || account != id.account {
+                if item.expire_at < min_expire_at {
+                    min_expire_at = item.expire_at;
+                }
+                return true;
+            }
+
+            if let Some(tx) = item.tx.take() {
+                tx.send(MessageStatus::Expired).ok();
+            }
+            false
+        });
+
+        self.min_expire_at.store(min_expire_at, Ordering::Release);
+        self.entry_count.store(entries.len(), Ordering::Release);
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -148,5 +175,86 @@ mod tests {
         queue.deliver_message(make_hash(0), make_hash(0));
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
         assert_eq!(rx.await.unwrap(), MessageStatus::Delivered);
+    }
+
+    #[tokio::test]
+    async fn expired_message_flow() {
+        let queue = make_queue();
+
+        // Add message
+        let rx = queue.add_message(make_hash(0), make_hash(0), 10).unwrap();
+
+        // Update before expiration time must not do anything
+        queue.update(&make_hash(0), 5);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
+
+        // Update after expiration time must remove message
+        queue.update(&make_hash(0), 15);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
+        assert_eq!(rx.await.unwrap(), MessageStatus::Expired);
+    }
+
+    #[tokio::test]
+    async fn multiple_messages_expiration_flow() {
+        let queue = make_queue();
+
+        // Add messages
+        let rx2 = queue.add_message(make_hash(1), make_hash(1), 20).unwrap();
+        let rx1 = queue.add_message(make_hash(0), make_hash(0), 10).unwrap();
+
+        queue.update(&make_hash(0), 5);
+        queue.update(&make_hash(1), 5);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
+
+        queue.update(&make_hash(0), 10);
+        queue.update(&make_hash(1), 10);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
+
+        queue.update(&make_hash(0), 15);
+        queue.update(&make_hash(1), 15);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 20);
+
+        queue.update(&make_hash(0), 25);
+        queue.update(&make_hash(1), 25);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
+
+        assert_eq!(rx1.await.unwrap(), MessageStatus::Expired);
+        assert_eq!(rx2.await.unwrap(), MessageStatus::Expired);
+    }
+
+    #[tokio::test]
+    async fn multiple_messages_delivery_flow() {
+        let queue = make_queue();
+
+        // Add messages
+        let rx2 = queue.add_message(make_hash(1), make_hash(1), 20).unwrap();
+        let rx1 = queue.add_message(make_hash(0), make_hash(0), 10).unwrap();
+
+        queue.update(&make_hash(0), 5);
+        queue.update(&make_hash(1), 5);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
+
+        queue.deliver_message(make_hash(1), make_hash(1));
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
+
+        queue.update(&make_hash(0), 15);
+        queue.update(&make_hash(1), 15);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
+
+        assert_eq!(rx1.await.unwrap(), MessageStatus::Expired);
+        assert_eq!(rx2.await.unwrap(), MessageStatus::Delivered);
+
+        // Add messages
+        let rx1 = queue.add_message(make_hash(0), make_hash(0), 10).unwrap();
+        let rx2 = queue.add_message(make_hash(1), make_hash(1), 20).unwrap();
+
+        queue.deliver_message(make_hash(0), make_hash(0));
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 20);
+
+        queue.deliver_message(make_hash(1), make_hash(1));
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
+
+        assert_eq!(rx1.await.unwrap(), MessageStatus::Delivered);
+        assert_eq!(rx2.await.unwrap(), MessageStatus::Delivered);
     }
 }
