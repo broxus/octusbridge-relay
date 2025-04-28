@@ -58,7 +58,7 @@ impl PendingMessagesQueue {
         }
     }
 
-    pub fn deliver_message(&self, account: UInt256, message_hash: UInt256) {
+    pub fn deliver_message(&self, account: UInt256, message_hash: UInt256, aborted: bool) {
         let mut entries = self.entries.lock();
         let mut message = match entries.remove(&PendingMessageId {
             account,
@@ -71,7 +71,12 @@ impl PendingMessagesQueue {
         self.entry_count.fetch_sub(1, Ordering::Release);
 
         if let Some(tx) = message.tx.take() {
-            tx.send(MessageStatus::Delivered).ok();
+            let status = if aborted {
+                MessageStatus::Aborted
+            } else {
+                MessageStatus::Delivered
+            };
+            tx.send(status).ok();
         }
 
         let current_min_expire_at = self.min_expire_at.load(Ordering::Acquire);
@@ -120,6 +125,7 @@ impl PendingMessagesQueue {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MessageStatus {
     Delivered,
+    Aborted,
     Expired,
 }
 
@@ -172,9 +178,22 @@ mod tests {
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
 
         // Deliver message
-        queue.deliver_message(make_hash(0), make_hash(0));
+        queue.deliver_message(make_hash(0), make_hash(0), false);
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
         assert_eq!(rx.await.unwrap(), MessageStatus::Delivered);
+    }
+
+    #[tokio::test]
+    async fn aborted_message_flow() {
+        let queue = make_queue();
+
+        // Add message
+        let rx = queue.add_message(make_hash(0), make_hash(0), 10).unwrap();
+
+        // Abort message
+        queue.deliver_message(make_hash(0), make_hash(0), true);
+        assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
+        assert_eq!(rx.await.unwrap(), MessageStatus::Aborted);
     }
 
     #[tokio::test]
@@ -234,7 +253,7 @@ mod tests {
         queue.update(&make_hash(1), 5);
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
 
-        queue.deliver_message(make_hash(1), make_hash(1));
+        queue.deliver_message(make_hash(1), make_hash(1), false);
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 10);
 
         queue.update(&make_hash(0), 15);
@@ -248,10 +267,10 @@ mod tests {
         let rx1 = queue.add_message(make_hash(0), make_hash(0), 10).unwrap();
         let rx2 = queue.add_message(make_hash(1), make_hash(1), 20).unwrap();
 
-        queue.deliver_message(make_hash(0), make_hash(0));
+        queue.deliver_message(make_hash(0), make_hash(0), false);
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), 20);
 
-        queue.deliver_message(make_hash(1), make_hash(1));
+        queue.deliver_message(make_hash(1), make_hash(1), false);
         assert_eq!(queue.min_expire_at.load(Ordering::Acquire), u32::MAX);
 
         assert_eq!(rx1.await.unwrap(), MessageStatus::Delivered);

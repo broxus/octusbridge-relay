@@ -407,9 +407,9 @@ impl AccountSubscription {
         for transaction in transactions.iter() {
             let hash = transaction.hash()?;
 
-            // Skip non-ordinary or aborted transactions
+            // Skip non-ordinary
             let transaction_info = match transaction.description.read_struct() {
-                Ok(ton_block::TransactionDescr::Ordinary(info)) if !info.aborted => info,
+                Ok(ton_block::TransactionDescr::Ordinary(info)) => info,
                 _ => continue,
             };
 
@@ -419,13 +419,22 @@ impl AccountSubscription {
                 .map(|message| (message, message.read_struct()))
             {
                 Some((message_cell, Ok(message))) => {
-                    if matches!(message.header(), ton_block::CommonMsgInfo::ExtInMsgInfo(_)) {
-                        messages_queue.deliver_message(*account, message_cell.hash());
+                    if message.is_inbound_external() {
+                        messages_queue.deliver_message(
+                            *account,
+                            message_cell.hash(),
+                            transaction_info.aborted,
+                        );
                     }
                     message
                 }
                 _ => continue,
             };
+
+            // Skip aborted transactions
+            if transaction_info.aborted {
+                continue;
+            }
 
             let ctx = TxContext {
                 account_state,

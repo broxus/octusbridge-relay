@@ -288,6 +288,11 @@ impl EngineContext {
                     // Do nothing on expire and just retry
                     tracing::warn!(account = %DisplayAddr(message.account), "message expired");
                 }
+                MessageStatus::Aborted => {
+                    // retry won't help, breaking
+                    tracing::error!(account = %DisplayAddr(message.account), "message aborted");
+                    break;
+                }
                 MessageStatus::Delivered => {
                     tracing::info!(
                         account = %DisplayAddr(message.account),
@@ -298,7 +303,7 @@ impl EngineContext {
             }
         }
 
-        // Make sure that observer is living enough. Messages will not be found
+        // Make sure that observer is living long enough. Messages will not be found
         // if it is deleted too early
         drop(observer);
         Ok(())
