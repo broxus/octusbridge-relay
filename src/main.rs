@@ -133,43 +133,43 @@ impl CmdGenerate {
             return Ok(());
         }
 
-        let (eth, ton) = match self.import {
+        let (evm, tvm) = match self.import {
             true => {
-                let ton_phrase: String = Input::new()
-                    .with_prompt("TON seed phrase")
+                let tvm_phrase: String = Input::new()
+                    .with_prompt("TVM seed phrase")
                     .interact_text()?;
-                let ton_path: String = Input::new()
-                    .with_prompt("TON derivation path")
-                    .with_initial_text(UnencryptedTonData::DEFAULT_PATH)
+                let tvm_path: String = Input::new()
+                    .with_prompt("TVM derivation path")
+                    .with_initial_text(UnencryptedTvmData::DEFAULT_PATH)
                     .interact_text()?;
-                let ton = UnencryptedTonData::from_phrase(ton_phrase.into(), ton_path.into())?;
+                let tvm = UnencryptedTvmData::from_phrase(tvm_phrase.into(), tvm_path.into())?;
 
-                let eth_phrase: String = Input::new()
-                    .with_prompt("ETH seed phrase")
+                let evm_phrase: String = Input::new()
+                    .with_prompt("EVM seed phrase")
                     .interact_text()?;
-                let eth_path: String = Input::new()
-                    .with_prompt("ETH derivation path")
-                    .with_initial_text(UnencryptedEthData::DEFAULT_PATH)
+                let evm_path: String = Input::new()
+                    .with_prompt("EVM derivation path")
+                    .with_initial_text(UnencryptedEvmData::DEFAULT_PATH)
                     .interact_text()?;
-                let eth = UnencryptedEthData::from_phrase(eth_phrase.into(), eth_path.into())?;
+                let evm = UnencryptedEvmData::from_phrase(evm_phrase.into(), evm_path.into())?;
 
-                (eth, ton)
+                (evm, tvm)
             }
             false => (
-                UnencryptedEthData::generate()?,
-                UnencryptedTonData::generate()?,
+                UnencryptedEvmData::generate()?,
+                UnencryptedTvmData::generate()?,
             ),
         };
 
-        println!("Generated TON data: {:#}", ton.as_printable());
-        println!("Generated ETH data: {:#}", eth.as_printable());
+        println!("Generated TVM data: {:#}", tvm.as_printable());
+        println!("Generated EVM data: {:#}", evm.as_printable());
 
         let password = if self.empty_password {
             make_empty_password()
         } else {
             config.ask_password(true)?
         };
-        StoredKeysData::new(password.unsecure(), eth, ton)
+        StoredKeysData::new(password.unsecure(), evm, tvm)
             .context("Failed to generate encrypted keys data")?
             .save(path)
             .context("Failed to save encrypted keys data")?;
@@ -179,7 +179,7 @@ impl CmdGenerate {
 }
 
 #[derive(Debug, FromArgs)]
-/// Prints phrases, ETH address and TON public key
+/// Prints phrases, EVM address and TVM public key
 #[argh(subcommand, name = "export")]
 struct CmdExport {
     /// the path where the encrypted file is stored
@@ -207,19 +207,19 @@ impl CmdExport {
             config.ask_password(false)?
         };
 
-        let (eth, ton) = data
+        let (evm, tvm) = data
             .decrypt(password.unsecure())
             .context("Failed to decrypt keys data")?;
 
         #[derive(Serialize)]
         struct ExportedKeysData {
-            eth: serde_json::Value,
-            ton: serde_json::Value,
+            evm: serde_json::Value,
+            tvm: serde_json::Value,
         }
 
         let exported = serde_json::to_string_pretty(&ExportedKeysData {
-            eth: eth.as_printable(),
-            ton: ton.as_printable(),
+            evm: evm.as_printable(),
+            tvm: tvm.as_printable(),
         })?;
 
         println!("{exported}");

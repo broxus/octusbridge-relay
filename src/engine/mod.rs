@@ -1,34 +1,34 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use everscale_rpc_client::{ClientOptions, RpcClient};
 use parking_lot::Mutex;
 use pomfrit::formatter::*;
 use tokio::sync::mpsc;
-use ton_block::Serializable;
+use ton_block::GetRepresentationHash;
+use tvm_rpc_client::{ClientOptions, RpcClient};
 
 use self::bridge::*;
-use self::eth_subscriber::*;
+use self::evm_subscriber::*;
 use self::keystore::*;
-use self::sol_subscriber::*;
 #[cfg(not(feature = "disable-staking"))]
 use self::staking::*;
+use self::svm_subscriber::*;
 #[cfg(feature = "ton")]
 use self::ton_meta::*;
-use self::ton_subscriber::*;
+use self::tvm_subscriber::*;
 use crate::config::*;
 use crate::utils::*;
 
 mod bridge;
-mod eth_subscriber;
+mod evm_subscriber;
 mod keystore;
-mod sol_subscriber;
 #[cfg(not(feature = "disable-staking"))]
 mod staking;
-mod ton_contracts;
+mod svm_subscriber;
 #[cfg(feature = "ton")]
 mod ton_meta;
-mod ton_subscriber;
+mod tvm_contracts;
+mod tvm_subscriber;
 
 pub struct Engine {
     metrics_exporter: Arc<pomfrit::MetricsExporter>,
@@ -65,9 +65,9 @@ impl Engine {
                 };
 
                 buffer
-                    .write(LabeledEthSubscriberMetrics(&engine.context))
-                    .write(LabeledTonSubscriberMetrics(&engine.context))
-                    .write(LabeledSolSubscriberMetrics(&engine.context));
+                    .write(LabeledEvmSubscriberMetrics(&engine.context))
+                    .write(LabeledTvmSubscriberMetrics(&engine.context))
+                    .write(LabeledSvmSubscriberMetrics(&engine.context));
 
                 if let Some(bridge) = &*engine.bridge.lock() {
                     buffer.write(LabeledBridgeMetrics {
@@ -106,12 +106,12 @@ impl Engine {
         self.context.start()?;
 
         // EVM subscriber
-        tracing::info!("starting ETH subscribers");
-        self.context.eth_subscribers.start();
+        tracing::info!("starting EVM subscribers");
+        self.context.evm_subscribers.start();
 
-        if let Some(sol_subscriber) = &self.context.sol_subscriber {
-            tracing::info!("starting SOL subscriber");
-            sol_subscriber.start();
+        if let Some(svm_subscriber) = &self.context.svm_subscriber {
+            tracing::info!("starting SVM subscriber");
+            svm_subscriber.start();
         }
 
         // Done
@@ -135,7 +135,7 @@ impl Engine {
     ) -> Result<()> {
         let bridge_contract = match self
             .context
-            .ton_subscriber
+            .tvm_subscriber
             .get_contract_state(&bridge_account)
             .await?
         {
@@ -143,7 +143,7 @@ impl Engine {
             None => return Err(EngineError::BridgeAccountNotFound.into()),
         };
 
-        let bridge_details = ton_contracts::BridgeContract(&bridge_contract)
+        let bridge_details = tvm_contracts::BridgeContract(&bridge_contract)
             .get_details()
             .context("Failed to get bridge details")?;
 
@@ -173,9 +173,9 @@ pub struct EngineContext {
     pub settings: BridgeConfig,
     pub keystore: Arc<KeyStore>,
     pub messages_queue: Arc<PendingMessagesQueue>,
-    pub ton_subscriber: Arc<TonSubscriber>,
-    pub eth_subscribers: Arc<EthSubscriberRegistry>,
-    pub sol_subscriber: Option<Arc<SolSubscriber>>,
+    pub tvm_subscriber: Arc<TvmSubscriber>,
+    pub evm_subscribers: Arc<EvmSubscriberRegistry>,
+    pub svm_subscriber: Option<Arc<SvmSubscriber>>,
     #[cfg(feature = "ton")]
     pub tokens_meta_client: TokenMetaClient,
     pub rpc_client: RpcClient,
@@ -195,17 +195,17 @@ impl EngineContext {
             RpcClient::new(settings.rpc_endpoints.clone(), ClientOptions::default()).await?;
 
         let messages_queue = PendingMessagesQueue::new(16);
-        let ton_subscriber = TonSubscriber::new(messages_queue.clone(), rpc_client.clone());
+        let tvm_subscriber = TvmSubscriber::new(messages_queue.clone(), rpc_client.clone());
         #[cfg(feature = "ton")]
         let tokens_meta_client = TokenMetaClient::new(&settings.token_meta_base_url);
 
-        let eth_subscribers = EthSubscriberRegistry::new(settings.evm_networks.clone())
+        let evm_subscribers = EvmSubscriberRegistry::new(settings.evm_networks.clone())
             .await
             .context("Failed to create EVM networks registry")?;
 
-        let sol_subscriber = match settings.sol_network.clone() {
+        let svm_subscriber = match settings.svm_network.clone() {
             Some(config) => Some(
-                SolSubscriber::new(config)
+                SvmSubscriber::new(config)
                     .await
                     .context("Failed to create Solana subscriber")?,
             ),
@@ -222,9 +222,9 @@ impl EngineContext {
             settings,
             keystore,
             messages_queue,
-            ton_subscriber,
-            eth_subscribers,
-            sol_subscriber,
+            tvm_subscriber,
+            evm_subscribers,
+            svm_subscriber,
             #[cfg(feature = "ton")]
             tokens_meta_client,
             rpc_client,
@@ -233,25 +233,23 @@ impl EngineContext {
 
     async fn initialize(&self) -> Result<()> {
         let blockchain_config = self.rpc_client.get_blockchain_config().await?;
-        self.ton_subscriber.initialize(&blockchain_config)?;
+        self.tvm_subscriber.initialize(&blockchain_config)?;
         Ok(())
     }
 
     fn start(&self) -> Result<()> {
-        self.ton_subscriber.start()
+        self.tvm_subscriber.start()
     }
 
-    pub async fn send_ton_message(
+    pub async fn send_tvm_message(
         &self,
         account: &ton_types::UInt256,
         message: &ton_block::Message,
         expire_at: u32,
     ) -> Result<MessageStatus> {
-        let cells = message.write_to_new_cell()?.into_cell()?;
-
         let rx = self
             .messages_queue
-            .add_message(*account, cells.repr_hash(), expire_at)?;
+            .add_message(*account, message.hash()?, expire_at)?;
 
         if let Err(e) = self.rpc_client.broadcast_message(message.clone()).await {
             tracing::warn!("Failed broadcasting message: {e}");
@@ -273,15 +271,15 @@ impl EngineContext {
     {
         // Check if message should be sent
         while condition() {
-            let signature_id = self.ton_subscriber.signature_id();
+            let signature_id = self.tvm_subscriber.signature_id();
 
             // Prepare and send the message
             // NOTE: it must be signed every time before sending because it uses current
             // timestamp in headers. It will not work outside this loop
-            let message = self.keystore.ton.sign(&unsigned_message, signature_id)?;
+            let message = self.keystore.tvm.sign(&unsigned_message, signature_id)?;
 
             match self
-                .send_ton_message(&message.account, &message.message, message.expire_at)
+                .send_tvm_message(&message.account, &message.message, message.expire_at)
                 .await?
             {
                 MessageStatus::Expired => {
@@ -319,37 +317,37 @@ impl std::fmt::Display for LabeledBridgeMetrics<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let metrics = self.bridge.metrics();
 
-        f.begin_metric("bridge_pending_eth_ton_event_count")
+        f.begin_metric("bridge_pending_evm_tvm_event_count")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.pending_eth_ton_event_count)?;
+            .value(metrics.pending_evm_tvm_event_count)?;
 
-        f.begin_metric("bridge_pending_ton_eth_event_count")
+        f.begin_metric("bridge_pending_tvm_evm_event_count")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.pending_ton_eth_event_count)?;
+            .value(metrics.pending_tvm_evm_event_count)?;
 
-        f.begin_metric("bridge_pending_sol_ton_event_count")
+        f.begin_metric("bridge_pending_svm_tvm_event_count")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.pending_sol_ton_event_count)?;
+            .value(metrics.pending_svm_tvm_event_count)?;
 
-        f.begin_metric("bridge_pending_ton_sol_event_count")
+        f.begin_metric("bridge_pending_tvm_svm_event_count")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.pending_ton_sol_event_count)?;
+            .value(metrics.pending_tvm_svm_event_count)?;
 
-        f.begin_metric("bridge_total_active_eth_ton_event_configurations")
+        f.begin_metric("bridge_total_active_evm_tvm_event_configurations")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.total_active_eth_ton_event_configurations)?;
+            .value(metrics.total_active_evm_tvm_event_configurations)?;
 
-        f.begin_metric("bridge_total_active_ton_eth_event_configurations")
+        f.begin_metric("bridge_total_active_tvm_evm_event_configurations")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.total_active_ton_eth_event_configurations)?;
+            .value(metrics.total_active_tvm_evm_event_configurations)?;
 
-        f.begin_metric("bridge_total_active_sol_ton_event_configurations")
+        f.begin_metric("bridge_total_active_svm_tvm_event_configurations")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.total_active_sol_ton_event_configurations)?;
+            .value(metrics.total_active_svm_tvm_event_configurations)?;
 
-        f.begin_metric("bridge_total_active_ton_sol_event_configurations")
+        f.begin_metric("bridge_total_active_tvm_svm_event_configurations")
             .label(LABEL_STAKER, &self.context.staker_account_str)
-            .value(metrics.total_active_ton_sol_event_configurations)?;
+            .value(metrics.total_active_tvm_svm_event_configurations)?;
 
         Ok(())
     }
@@ -430,19 +428,19 @@ impl std::fmt::Display for LabeledStakingMetrics<'_> {
     }
 }
 
-struct LabeledTonSubscriberMetrics<'a>(&'a EngineContext);
+struct LabeledTvmSubscriberMetrics<'a>(&'a EngineContext);
 
-impl std::fmt::Display for LabeledTonSubscriberMetrics<'_> {
+impl std::fmt::Display for LabeledTvmSubscriberMetrics<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let metrics = self.0.ton_subscriber.metrics();
+        let metrics = self.0.tvm_subscriber.metrics();
 
         if metrics.current_utime > 0 {
-            f.begin_metric("ton_subscriber_current_utime")
+            f.begin_metric("tvm_subscriber_current_utime")
                 .label(LABEL_STAKER, &self.0.staker_account_str)
                 .value(metrics.current_utime)?;
         }
 
-        f.begin_metric("ton_subscriber_pending_message_count")
+        f.begin_metric("tvm_subscriber_pending_message_count")
             .label(LABEL_STAKER, &self.0.staker_account_str)
             .value(metrics.pending_message_count)?;
 
@@ -450,20 +448,20 @@ impl std::fmt::Display for LabeledTonSubscriberMetrics<'_> {
     }
 }
 
-struct LabeledEthSubscriberMetrics<'a>(&'a EngineContext);
+struct LabeledEvmSubscriberMetrics<'a>(&'a EngineContext);
 
-impl std::fmt::Display for LabeledEthSubscriberMetrics<'_> {
+impl std::fmt::Display for LabeledEvmSubscriberMetrics<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for subscriber in self.0.eth_subscribers.subscribers() {
+        for subscriber in self.0.evm_subscribers.subscribers() {
             let chain_id = subscriber.chain_id_str();
             let metrics = subscriber.metrics();
 
-            f.begin_metric("eth_subscriber_last_processed_block")
+            f.begin_metric("evm_subscriber_last_processed_block")
                 .label(LABEL_STAKER, &self.0.staker_account_str)
                 .label(LABEL_CHAIN_ID, chain_id)
                 .value(metrics.last_processed_block)?;
 
-            f.begin_metric("eth_subscriber_pending_confirmation_count")
+            f.begin_metric("evm_subscriber_pending_confirmation_count")
                 .label(LABEL_STAKER, &self.0.staker_account_str)
                 .label(LABEL_CHAIN_ID, chain_id)
                 .value(metrics.pending_confirmation_count)?;
@@ -472,14 +470,14 @@ impl std::fmt::Display for LabeledEthSubscriberMetrics<'_> {
     }
 }
 
-struct LabeledSolSubscriberMetrics<'a>(&'a EngineContext);
+struct LabeledSvmSubscriberMetrics<'a>(&'a EngineContext);
 
-impl std::fmt::Display for LabeledSolSubscriberMetrics<'_> {
+impl std::fmt::Display for LabeledSvmSubscriberMetrics<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(sol_subscriber) = &self.0.sol_subscriber {
-            let metrics = sol_subscriber.metrics();
+        if let Some(svm_subscriber) = &self.0.svm_subscriber {
+            let metrics = svm_subscriber.metrics();
 
-            f.begin_metric("sol_subscriber_pending_events_count")
+            f.begin_metric("svm_subscriber_pending_events_count")
                 .label(LABEL_STAKER, &self.0.staker_account_str)
                 .value(metrics.pending_events_count)?;
         }

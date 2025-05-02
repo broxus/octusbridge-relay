@@ -31,21 +31,21 @@ use crate::utils::*;
 
 static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-pub struct SolSubscriber {
-    config: SolConfig,
-    rpc_clients: Vec<SolClient>,
+pub struct SvmSubscriber {
+    config: SvmConfig,
+    rpc_clients: Vec<SvmClient>,
     programs_to_subscribe: parking_lot::RwLock<Vec<Pubkey>>,
     pending_events: tokio::sync::Mutex<FxHashMap<Pubkey, PendingEvent>>,
     pending_events_count: AtomicUsize,
     new_events_notify: Notify,
 }
 
-impl SolSubscriber {
-    pub async fn new(config: SolConfig) -> Result<Arc<Self>> {
+impl SvmSubscriber {
+    pub async fn new(config: SvmConfig) -> Result<Arc<Self>> {
         let rpc_clients = config
             .endpoints
             .iter()
-            .map(|endpoint| SolClient {
+            .map(|endpoint| SvmClient {
                 rpc_client: RpcClient::new_with_timeout(
                     endpoint.clone(),
                     Duration::from_secs(config.connection_timeout_sec),
@@ -60,7 +60,7 @@ impl SolSubscriber {
             tracing::info!(
                 block_height,
                 url = &client.rpc_client.url(),
-                "SOL subscriber"
+                "SVM subscriber"
             );
         }
 
@@ -87,7 +87,7 @@ impl SolSubscriber {
                 };
 
                 if let Err(e) = subscriber.update().await {
-                    tracing::error!("error occurred during SOL subscriber update: {e:?}");
+                    tracing::error!("error occurred during SVM subscriber update: {e:?}");
                 }
             }
         });
@@ -96,18 +96,18 @@ impl SolSubscriber {
     pub fn subscribe(&self, program_pubkey: Pubkey) {
         let mut programs = self.programs_to_subscribe.write();
         if !programs.contains(&program_pubkey) {
-            tracing::info!(%program_pubkey, "subscribe to solana program");
+            tracing::info!(%program_pubkey, "subscribe to SVM program");
             programs.push(program_pubkey);
         }
     }
 
-    pub fn metrics(&self) -> SolSubscriberMetrics {
-        SolSubscriberMetrics {
+    pub fn metrics(&self) -> SvmSubscriberMetrics {
+        SvmSubscriberMetrics {
             pending_events_count: self.pending_events_count.load(Ordering::Acquire),
         }
     }
 
-    pub async fn verify_ton_sol_event(
+    pub async fn verify_tvm_svm_event(
         &self,
         account_pubkey: Pubkey,
         event_data: Vec<u8>,
@@ -143,15 +143,15 @@ impl SolSubscriber {
         Ok(res)
     }
 
-    pub async fn verify_sol_ton_event(
+    pub async fn verify_svm_tvm_event(
         &self,
-        transaction_data: SolTonTransactionData,
-        account_data: SolTonAccountData,
+        transaction_data: SvmTvmTransactionData,
+        account_data: SvmTvmAccountData,
     ) -> Result<VerificationStatus> {
         let client = self.get_rpc_client()?;
-        match verify_sol_ton_transaction(client, transaction_data, &self.config).await? {
+        match verify_svm_tvm_transaction(client, transaction_data, &self.config).await? {
             VerificationStatus::Exists => {
-                verify_sol_ton_account(client, account_data, &self.config).await
+                verify_svm_tvm_account(client, account_data, &self.config).await
             }
             status @ VerificationStatus::NotExists { .. } => Ok(status),
         }
@@ -159,7 +159,7 @@ impl SolSubscriber {
 
     pub async fn send_message(
         &self,
-        client: &SolClient,
+        client: &SvmClient,
         message: Message,
         keystore: &Arc<KeyStore>,
     ) -> Result<Signature, ClientError> {
@@ -175,11 +175,11 @@ impl SolSubscriber {
                     )
                     .await
                 },
-                generate_sol_rpc_backoff_config(Duration::from_secs(
+                generate_svm_rpc_backoff_config(Duration::from_secs(
                     self.config.maximum_failed_responses_time_sec,
                 )),
-                NetworkType::SOL,
-                "send solana transaction",
+                NetworkType::SVM,
+                "send SVM transaction",
             )
             .await?
         };
@@ -189,7 +189,7 @@ impl SolSubscriber {
 
     pub async fn get_signature_status(
         &self,
-        client: &SolClient,
+        client: &SvmClient,
         signature: &Signature,
     ) -> Result<(), ClientError> {
         let res = loop {
@@ -202,7 +202,7 @@ impl SolSubscriber {
                     generate_default_timeout_config(Duration::from_secs(
                         self.config.maximum_failed_responses_time_sec,
                     )),
-                    NetworkType::SOL,
+                    NetworkType::SVM,
                     "get transaction",
                 )
                 .await?
@@ -227,7 +227,7 @@ impl SolSubscriber {
 
     pub async fn is_already_voted(
         &self,
-        client: &SolClient,
+        client: &SvmClient,
         round_number: u32,
         proposal_pubkey: &Pubkey,
         voter_pubkey: &Pubkey,
@@ -245,7 +245,7 @@ impl SolSubscriber {
             Some(account) => solana_bridge::round_loader::RelayRound::unpack(account.data())?,
             None => {
                 return Err(
-                    SolSubscriberError::InvalidRoundAccount(relay_round_pubkey.to_string()).into(),
+                    SvmSubscriberError::InvalidRoundAccount(relay_round_pubkey.to_string()).into(),
                 )
             }
         };
@@ -255,7 +255,7 @@ impl SolSubscriber {
         let proposal_data = match proposal_account {
             Some(account) => Proposal::unpack_from_slice(account.data())?,
             None => {
-                // Here only in case if event is expired. Don't vote in Solana
+                // Here only in case if event is expired. Don't vote in SVM
                 return Ok(true);
             }
         };
@@ -264,12 +264,12 @@ impl SolSubscriber {
             .relays
             .iter()
             .position(|pubkey| pubkey == voter_pubkey)
-            .ok_or(SolSubscriberError::InvalidRound(round_number))?;
+            .ok_or(SvmSubscriberError::InvalidRound(round_number))?;
 
         let vote = proposal_data
             .signers
             .get(index)
-            .ok_or(SolSubscriberError::InvalidVotePosition(index))?;
+            .ok_or(SvmSubscriberError::InvalidVotePosition(index))?;
 
         Ok(*vote != solana_bridge::bridge_types::Vote::None)
     }
@@ -285,12 +285,12 @@ impl SolSubscriber {
 
         tracing::info!(
             pending_events = self.pending_events_count.load(Ordering::Acquire),
-            "updating SOL subscriber",
+            "updating SVM subscriber",
         );
 
         let mut accounts_to_check = HashSet::new();
 
-        // Get pending TON events to check
+        // Get pending SVM events to check
         let time = chrono::Utc::now().timestamp() as u64;
 
         let mut pending_events = self.pending_events.lock().await;
@@ -300,7 +300,7 @@ impl SolSubscriber {
                 true => {
                     if let Some(tx) = event.status_tx.take() {
                         tx.send(VerificationStatus::NotExists {
-                            reason: "TON->SOL event is expired".to_owned(),
+                            reason: "TVM->SVM event is expired".to_owned(),
                         })
                         .ok();
                     }
@@ -311,7 +311,7 @@ impl SolSubscriber {
                     if time > event.time {
                         tracing::info!(
                             account_pubkey = %account,
-                            "adding proposal account from TON->SOL pending events to checklist",
+                            "adding proposal account from TVM->SVM pending events to checklist",
                         );
 
                         let time_diff = time - event.created_at;
@@ -376,7 +376,7 @@ impl SolSubscriber {
                                 entry.remove();
 
                                 anyhow::bail!(
-                                    "Round {} in solana doesn't exist",
+                                    "Round {} in SVM doesn't exist",
                                     account_data.round_number
                                 );
                             }
@@ -401,13 +401,13 @@ impl SolSubscriber {
                 Ok(None) => {
                     tracing::info!(
                         %account_pubkey,
-                        "Solana proposal account doesn't exist yet",
+                        "SVM proposal account doesn't exist yet",
                     );
                 }
                 Err(e) => {
                     tracing::error!(
                         %account_pubkey,
-                        "failed to check solana proposal: {e:?}",
+                        "failed to check SVM proposal: {e:?}",
                     );
                 }
             }
@@ -421,19 +421,19 @@ impl SolSubscriber {
         Ok(())
     }
 
-    pub fn get_rpc_client(&self) -> Result<&SolClient, ClientError> {
+    pub fn get_rpc_client(&self) -> Result<&SvmClient, ClientError> {
         let index = ROUND_ROBIN_COUNTER.fetch_add(1, Ordering::Release) % self.rpc_clients.len();
 
         self.rpc_clients
             .get(index)
             .ok_or(ClientError::from(ClientErrorKind::Custom(
-                "Failed to get solana RPC client".to_string(),
+                "Failed to get SVM RPC client".to_string(),
             )))
     }
 }
 
 async fn get_account(
-    client: &SolClient,
+    client: &SvmClient,
     account_pubkey: &Pubkey,
     maximum_failed_responses_time_secs: u64,
 ) -> Result<Option<Account>> {
@@ -450,7 +450,7 @@ async fn get_account(
             generate_default_timeout_config(Duration::from_secs(
                 maximum_failed_responses_time_secs,
             )),
-            NetworkType::SOL,
+            NetworkType::SVM,
             "get account",
         )
         .await?
@@ -460,7 +460,7 @@ async fn get_account(
 }
 
 async fn get_transaction(
-    client: &SolClient,
+    client: &SvmClient,
     signature: &Signature,
     maximum_failed_responses_time_secs: u64,
 ) -> Result<EncodedConfirmedTransactionWithStatusMeta> {
@@ -481,8 +481,8 @@ async fn get_transaction(
             generate_default_timeout_config(Duration::from_secs(
                 maximum_failed_responses_time_secs,
             )),
-            NetworkType::SOL,
-            "get solana transaction",
+            NetworkType::SVM,
+            "get SVM transaction",
         )
         .await?
     };
@@ -491,7 +491,7 @@ async fn get_transaction(
 }
 
 async fn get_latest_blockhash(
-    client: &SolClient,
+    client: &SvmClient,
     maximum_failed_responses_time_secs: u64,
 ) -> Result<solana_sdk::hash::Hash, ClientError> {
     let hash = {
@@ -503,7 +503,7 @@ async fn get_latest_blockhash(
             generate_default_timeout_config(Duration::from_secs(
                 maximum_failed_responses_time_secs,
             )),
-            NetworkType::SOL,
+            NetworkType::SVM,
             "get latest blockhash",
         )
         .await?
@@ -513,7 +513,7 @@ async fn get_latest_blockhash(
 }
 
 async fn get_block_height(
-    client: &SolClient,
+    client: &SvmClient,
     maximum_failed_responses_time_secs: u64,
 ) -> Result<u64> {
     let block_height = {
@@ -525,7 +525,7 @@ async fn get_block_height(
             generate_default_timeout_config(Duration::from_secs(
                 maximum_failed_responses_time_secs,
             )),
-            NetworkType::SOL,
+            NetworkType::SVM,
             "get block height",
         )
         .await?
@@ -534,14 +534,14 @@ async fn get_block_height(
     Ok(block_height)
 }
 
-async fn healthcheck(client: &SolClient, maximum_failed_responses_time_secs: u64) -> Result<()> {
+async fn healthcheck(client: &SvmClient, maximum_failed_responses_time_secs: u64) -> Result<()> {
     retry(
         || async {
             let _permit = client.pool.acquire().await;
             client.rpc_client.get_health().await
         },
         generate_default_timeout_config(Duration::from_secs(maximum_failed_responses_time_secs)),
-        NetworkType::SOL,
+        NetworkType::SVM,
         "healthcheck",
     )
     .await?;
@@ -550,20 +550,20 @@ async fn healthcheck(client: &SolClient, maximum_failed_responses_time_secs: u64
 }
 
 async fn send_and_confirm_message(
-    client: &SolClient,
+    client: &SvmClient,
     message: Message,
     keystore: &Arc<KeyStore>,
     maximum_failed_responses_time_secs: u64,
 ) -> Result<Signature, ClientError> {
     let transaction = keystore
-        .sol
+        .svm
         .sign(
             message,
             get_latest_blockhash(client, maximum_failed_responses_time_secs).await?,
         )
         .map_err(|err| {
             ClientError::from(ClientErrorKind::Custom(format!(
-                "Failed to sign sol message: {err}"
+                "Failed to sign SVM message: {err}"
             )))
         })?;
 
@@ -574,10 +574,10 @@ async fn send_and_confirm_message(
         .await
 }
 
-async fn verify_sol_ton_account(
-    client: &SolClient,
-    data: SolTonAccountData,
-    config: &SolConfig,
+async fn verify_svm_tvm_account(
+    client: &SvmClient,
+    data: SvmTvmAccountData,
+    config: &SvmConfig,
 ) -> Result<VerificationStatus> {
     let account_pubkey =
         solana_bridge::token_proxy::get_associated_deposit_address(&data.program_id, data.seed);
@@ -605,9 +605,9 @@ async fn verify_sol_ton_account(
     let account = match result {
         Some(account) => account,
         None => {
-            tracing::error!(%account_pubkey, "Solana account doesn't exist");
+            tracing::error!(%account_pubkey, "SVM account doesn't exist");
             return Ok(VerificationStatus::NotExists {
-                reason: "Solana account doesn't exist".to_owned(),
+                reason: "SVM account doesn't exist".to_owned(),
             });
         }
     };
@@ -622,10 +622,10 @@ async fn verify_sol_ton_account(
     Ok(VerificationStatus::Exists)
 }
 
-async fn verify_sol_ton_transaction(
-    client: &SolClient,
-    data: SolTonTransactionData,
-    config: &SolConfig,
+async fn verify_svm_tvm_transaction(
+    client: &SvmClient,
+    data: SvmTvmTransactionData,
+    config: &SvmConfig,
 ) -> Result<VerificationStatus> {
     let maximum_failed_responses_time_secs = config.maximum_failed_responses_time_sec;
 
@@ -640,7 +640,7 @@ async fn verify_sol_ton_transaction(
 
     let transaction =
         result.transaction.transaction.decode().ok_or_else(|| {
-            SolSubscriberError::DecodeTransactionError(data.signature.to_string())
+            SvmSubscriberError::DecodeTransactionError(data.signature.to_string())
         })?;
 
     let (account_keys, mut instructions) = match transaction.message {
@@ -692,7 +692,7 @@ async fn verify_sol_ton_transaction(
     })
 }
 
-pub struct SolClient {
+pub struct SvmClient {
     rpc_client: RpcClient,
     pool: Semaphore,
 }
@@ -719,13 +719,13 @@ impl PendingEvent {
 
 type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
 
-pub struct SolTonAccountData {
+pub struct SvmTvmAccountData {
     pub program_id: Pubkey,
     pub seed: u128,
     pub event_data: Vec<u8>,
 }
 
-pub struct SolTonTransactionData {
+pub struct SvmTvmTransactionData {
     pub program_id: Pubkey,
     pub signature: Signature,
     pub slot: Slot,
@@ -734,13 +734,13 @@ pub struct SolTonTransactionData {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct SolSubscriberMetrics {
+pub struct SvmSubscriberMetrics {
     pub pending_events_count: usize,
 }
 
 #[derive(thiserror::Error, Debug)]
-enum SolSubscriberError {
-    #[error("Failed to decode solana transaction `{0}`")]
+enum SvmSubscriberError {
+    #[error("Failed to decode SVM transaction `{0}`")]
     DecodeTransactionError(String),
     #[error("Relay is not in the round `{0}`")]
     InvalidRound(u32),

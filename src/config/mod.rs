@@ -4,14 +4,14 @@ use nekoton_utils::*;
 use secstr::SecUtf8;
 use serde::{Deserialize, Serialize};
 
-pub use self::eth_config::*;
-pub use self::sol_config::*;
+pub use self::evm_config::*;
 pub use self::stored_keys::*;
+pub use self::svm_config::*;
 pub use self::verification_state::*;
 
-mod eth_config;
-mod sol_config;
+mod evm_config;
 mod stored_keys;
+mod svm_config;
 mod verification_state;
 
 /// Main application config (full). Used to run relay
@@ -57,13 +57,13 @@ pub struct BridgeConfig {
     pub ignore_elections: bool,
 
     /// EVM networks settings
-    pub evm_networks: Vec<EthConfig>,
+    pub evm_networks: Vec<EvmConfig>,
 
-    /// Solana network settings
-    #[serde(default)]
-    pub sol_network: Option<SolConfig>,
+    /// SVM network settings
+    #[serde(default, alias = "sol_network")]
+    pub svm_network: Option<SvmConfig>,
 
-    /// ETH address verification settings
+    /// EVM address verification settings
     #[serde(default)]
     pub address_verification: AddressVerificationConfig,
 
@@ -74,7 +74,7 @@ pub struct BridgeConfig {
     pub rpc_endpoints: Vec<url::Url>,
 }
 
-/// ETH address verification settings
+/// EVM address verification settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AddressVerificationConfig {

@@ -3,9 +3,9 @@ use ton_block::MsgAddressInt;
 use ton_types::{Cell, UInt256};
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct EthTonEventInitData {
+pub struct EvmTvmEventInitData {
     #[abi]
-    pub vote_data: EthTonEventVoteData,
+    pub vote_data: EvmTvmEventVoteData,
     #[abi(with = "address_only_hash")]
     pub configuration: UInt256,
     #[abi(with = "address_only_hash")]
@@ -15,13 +15,13 @@ pub struct EthTonEventInitData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct EthTonEventVoteData {
+pub struct EvmTvmEventVoteData {
     #[abi(uint256)]
     pub event_transaction: UInt256,
     #[abi(uint32)]
     pub event_index: u32,
     #[abi(cell)]
-    pub event_data: ton_types::Cell,
+    pub event_data: Cell,
     #[abi(uint32)]
     pub event_block_number: u32,
     #[abi(uint256)]
@@ -29,7 +29,7 @@ pub struct EthTonEventVoteData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct EthTonEventDecodedData {
+pub struct EvmTvmEventDecodedData {
     #[abi(name = "token_")]
     pub token: MsgAddressInt,
     #[abi(name = "amount_")]
@@ -38,8 +38,8 @@ pub struct EthTonEventDecodedData {
     pub recipient: MsgAddressInt,
     #[abi(name = "value_")]
     pub value: UInt256,
-    #[abi(name = "expected_evers_")]
-    pub expected_evers: UInt256,
+    #[abi(name = "expected_gas_")]
+    pub expected_gas: UInt256,
     #[abi(name = "payload_")]
     pub payload: Cell,
     #[abi(name = "proxy_")]
@@ -49,9 +49,9 @@ pub struct EthTonEventDecodedData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct TonEthEventInitData {
+pub struct TvmEvmEventInitData {
     #[abi]
-    pub vote_data: TonEthEventVoteData,
+    pub vote_data: TvmEvmEventVoteData,
     #[abi(with = "address_only_hash")]
     pub configuration: UInt256,
     #[abi(with = "address_only_hash")]
@@ -59,17 +59,17 @@ pub struct TonEthEventInitData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct TonEthEventVoteData {
+pub struct TvmEvmEventVoteData {
     #[abi(uint64)]
     pub event_transaction_lt: u64,
     #[abi(uint32)]
     pub event_timestamp: u32,
     #[abi(cell)]
-    pub event_data: ton_types::Cell,
+    pub event_data: Cell,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct TonEthEventDecodedData {
+pub struct TvmEvmEventDecodedData {
     #[abi(name = "proxy_")]
     pub proxy: MsgAddressInt,
     #[abi(name = "tokenWallet_")]
@@ -85,7 +85,7 @@ pub struct TonEthEventDecodedData {
     #[abi(name = "chainId_")]
     pub chain_id: UInt256,
     #[abi]
-    pub callback: TonEthEventDecodedDataCallback,
+    pub callback: TvmEvmEventDecodedDataCallback,
     #[abi(name = "name_", string)]
     pub name: String,
     #[abi(name = "symbol_", string)]
@@ -95,7 +95,7 @@ pub struct TonEthEventDecodedData {
 }
 
 #[derive(Debug, Clone, UnpackAbi, PackAbi, KnownParamType)]
-pub struct TonEthEventDecodedDataCallback {
+pub struct TvmEvmEventDecodedDataCallback {
     #[abi(with = "uint160_bytes")]
     pub recipient: [u8; 20],
     #[abi]
@@ -105,9 +105,9 @@ pub struct TonEthEventDecodedDataCallback {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct SolTonEventInitData {
+pub struct SvmTvmEventInitData {
     #[abi]
-    pub vote_data: SolTonEventVoteData,
+    pub vote_data: SvmTvmEventVoteData,
     #[abi(with = "address_only_hash")]
     pub configuration: UInt256,
     #[abi(with = "address_only_hash")]
@@ -115,7 +115,7 @@ pub struct SolTonEventInitData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct SolTonEventVoteData {
+pub struct SvmTvmEventVoteData {
     #[abi(uint128)]
     pub account_seed: u128,
     #[abi(uint64)]
@@ -125,13 +125,13 @@ pub struct SolTonEventVoteData {
     #[abi(string)]
     pub signature: String,
     #[abi(cell)]
-    pub event_data: ton_types::Cell,
+    pub event_data: Cell,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct TonSolEventInitData {
+pub struct TvmSvmEventInitData {
     #[abi]
-    pub vote_data: TonSolEventVoteData,
+    pub vote_data: TvmSvmEventVoteData,
     #[abi(with = "address_only_hash")]
     pub configuration: UInt256,
     #[abi(with = "address_only_hash")]
@@ -139,7 +139,7 @@ pub struct TonSolEventInitData {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct TonSolEventVoteData {
+pub struct TvmSvmEventVoteData {
     #[abi(uint64)]
     pub event_transaction_lt: u64,
     #[abi(uint32)]
@@ -151,7 +151,7 @@ pub struct TonSolEventVoteData {
     #[abi(array)]
     pub execute_payload_accounts: Vec<ExecuteAccount>,
     #[abi(cell)]
-    pub event_data: ton_types::Cell,
+    pub event_data: Cell,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -181,43 +181,43 @@ pub enum EventVote {
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct EthTonEventConfigurationDetails {
+pub struct EvmTvmEventConfigurationDetails {
     #[abi]
     pub basic_configuration: BasicConfiguration,
     #[abi]
-    pub network_configuration: EthTonEventConfiguration,
+    pub network_configuration: EvmTvmEventConfiguration,
     #[abi(cell)]
-    pub meta: ton_types::Cell,
+    pub meta: Cell,
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct TonEthEventConfigurationDetails {
+pub struct TvmEvmEventConfigurationDetails {
     #[abi]
     pub basic_configuration: BasicConfiguration,
     #[abi]
-    pub network_configuration: TonEthEventConfiguration,
+    pub network_configuration: TvmEvmEventConfiguration,
     #[abi(cell)]
-    pub meta: ton_types::Cell,
+    pub meta: Cell,
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct SolTonEventConfigurationDetails {
+pub struct SvmTvmEventConfigurationDetails {
     #[abi]
     pub basic_configuration: BasicConfiguration,
     #[abi]
-    pub network_configuration: SolTonEventConfiguration,
+    pub network_configuration: SvmTvmEventConfiguration,
     #[abi(cell)]
-    pub meta: ton_types::Cell,
+    pub meta: Cell,
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct TonSolEventConfigurationDetails {
+pub struct TvmSvmEventConfigurationDetails {
     #[abi]
     pub basic_configuration: BasicConfiguration,
     #[abi]
-    pub network_configuration: TonSolEventConfiguration,
+    pub network_configuration: TvmSvmEventConfiguration,
     #[abi(cell)]
-    pub meta: ton_types::Cell,
+    pub meta: Cell,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
@@ -229,11 +229,11 @@ pub struct BasicConfiguration {
     #[abi(uint64)]
     pub event_initial_balance: u64,
     #[abi(cell)]
-    pub event_code: ton_types::Cell,
+    pub event_code: Cell,
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct EthTonEventConfiguration {
+pub struct EvmTvmEventConfiguration {
     #[abi(uint32)]
     pub chain_id: u32,
     #[abi(with = "uint160_bytes")]
@@ -249,7 +249,7 @@ pub struct EthTonEventConfiguration {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct TonEthEventConfiguration {
+pub struct TvmEvmEventConfiguration {
     #[abi(with = "address_only_hash")]
     pub event_emitter: UInt256,
     #[abi(with = "uint160_bytes")]
@@ -261,7 +261,7 @@ pub struct TonEthEventConfiguration {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct SolTonEventConfiguration {
+pub struct SvmTvmEventConfiguration {
     #[abi(uint256)]
     pub program: UInt256,
     #[abi(with = "address_only_hash")]
@@ -273,7 +273,7 @@ pub struct SolTonEventConfiguration {
 }
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
-pub struct TonSolEventConfiguration {
+pub struct TvmSvmEventConfiguration {
     #[abi(uint256)]
     pub program: UInt256,
     #[abi(with = "address_only_hash")]
@@ -294,19 +294,21 @@ pub struct TonSolEventConfiguration {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, PackAbi, UnpackAbi, KnownParamType)]
 pub enum EventType {
-    EthTon = 0,
-    TonEth = 1,
-    SolTon = 2,
-    TonSol = 3,
+    EvmTvm = 0,
+    TvmEvm = 1,
+    SvmTvm = 2,
+    TvmSvm = 3,
+    TvmTvm = 4,
 }
 
 impl std::fmt::Display for EventType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::EthTon => f.write_str("ETH->TON"),
-            Self::TonEth => f.write_str("TON->ETH"),
-            Self::SolTon => f.write_str("SOL->TON"),
-            Self::TonSol => f.write_str("TON->SOL"),
+            Self::EvmTvm => f.write_str("EVM->TVM"),
+            Self::TvmEvm => f.write_str("TVM->EVM"),
+            Self::SvmTvm => f.write_str("SVM->TVM"),
+            Self::TvmSvm => f.write_str("TVM->SVM"),
+            Self::TvmTvm => f.write_str("TVM->TVM"),
         }
     }
 }
@@ -314,7 +316,7 @@ impl std::fmt::Display for EventType {
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
 pub struct BridgeDetails {
     #[abi(cell)]
-    pub connector_code: ton_types::Cell,
+    pub connector_code: Cell,
     #[abi(uint64)]
     pub connector_deploy_value: u64,
     #[abi(uint64)]
@@ -369,17 +371,19 @@ pub struct StakerAddresses {
 
 pub mod array_address_only_nonzero_hash {
     use super::*;
+    use ton_abi::{ParamType, TokenValue};
+    use ton_block::{MsgAddrStd, MsgAddress};
 
-    pub fn unpack(value: &ton_abi::TokenValue) -> UnpackerResult<Vec<UInt256>> {
+    pub fn unpack(value: &TokenValue) -> UnpackerResult<Vec<UInt256>> {
         match value {
-            ton_abi::TokenValue::Array(_, values) => {
+            TokenValue::Array(_, values) => {
                 let mut result = Vec::with_capacity(values.len());
                 for value in values {
                     match value {
-                        ton_abi::TokenValue::Address(ton_block::MsgAddress::AddrStd(
-                            ton_block::MsgAddrStd { address, .. },
-                        )) => result.push(UInt256::from_be_bytes(&address.get_bytestring(0))),
-                        ton_abi::TokenValue::Address(ton_block::MsgAddress::AddrNone) => continue,
+                        TokenValue::Address(MsgAddress::AddrStd(MsgAddrStd {
+                            address, ..
+                        })) => result.push(UInt256::from_be_bytes(&address.get_bytestring(0))),
+                        TokenValue::Address(MsgAddress::AddrNone) => continue,
                         _ => return Err(UnpackerError::InvalidAbi),
                     }
                 }
@@ -389,8 +393,8 @@ pub mod array_address_only_nonzero_hash {
         }
     }
 
-    pub fn param_type() -> ton_abi::ParamType {
-        ton_abi::ParamType::Array(Box::new(ton_abi::ParamType::Address))
+    pub fn param_type() -> ParamType {
+        ParamType::Array(Box::new(ParamType::Address))
     }
 }
 
@@ -402,23 +406,23 @@ pub struct RelayKeys {
 
 #[derive(Debug, Clone, PackAbi, UnpackAbi, KnownParamType)]
 pub struct UserDataDetails {
-    #[abi(uint128)]
+    #[abi]
     pub token_balance: u128,
-    #[abi(uint32)]
+    #[abi]
     pub relay_lock_until: u32,
-    #[abi(uint32)]
+    #[abi]
     pub current_version: u32,
     #[abi(array)]
     pub reward_rounds: Vec<UserDataRewardRound>,
-    #[abi(with = "uint160_bytes")]
-    pub relay_eth_address: [u8; 20],
-    #[abi(bool)]
-    pub eth_address_confirmed: bool,
-    #[abi(uint256)]
-    pub relay_ton_pubkey: UInt256,
-    #[abi(bool)]
-    pub ton_pubkey_confirmed: bool,
-    #[abi(bool)]
+    #[abi(name = "relay_eth_address", with = "uint160_bytes")]
+    pub relay_evm_address: [u8; 20],
+    #[abi(name = "eth_address_confirmed")]
+    pub evm_address_confirmed: bool,
+    #[abi(name = "relay_ton_pubkey")]
+    pub relay_tvm_pubkey: UInt256,
+    #[abi(name = "ton_pubkey_confirmed")]
+    pub tvm_pubkey_confirmed: bool,
+    #[abi]
     pub slashed: bool,
     #[abi(with = "address_only_hash")]
     pub root: UInt256,
@@ -441,10 +445,10 @@ pub struct UserDataRewardRound {
 pub struct StakingDetails {
     #[abi(with = "address_only_hash")]
     pub dao_root: UInt256,
-    #[abi(with = "address_only_hash")]
-    pub bridge_event_config_eth_ton: UInt256,
-    #[abi(with = "address_only_hash")]
-    pub bridge_event_config_ton_eth: UInt256,
+    #[abi(name = "bridge_event_config_eth_ton", with = "address_only_hash")]
+    pub bridge_event_config_evm_tvm: UInt256,
+    #[abi(name = "bridge_event_config_ton_eth", with = "address_only_hash")]
+    pub bridge_event_config_tvm_evm: UInt256,
     #[abi(with = "address_only_hash")]
     pub token_root: UInt256,
     #[abi(with = "address_only_hash")]
@@ -485,8 +489,8 @@ pub struct RelayConfigDetails {
     pub min_relay_count: u16,
     #[abi(uint128)]
     pub min_relay_deposit: u128,
-    #[abi(uint128)]
-    pub relay_initial_ton_deposit: u128,
+    #[abi(name = "relay_initial_ton_deposit")]
+    pub relay_initial_deposit: u128,
     #[abi(uint128)]
     pub relay_reward_per_second: u128,
     #[abi(uint128)]
@@ -548,15 +552,15 @@ pub struct ElectionEndedEvent {
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct TonPubkeyConfirmedEvent {
-    #[abi(uint256)]
-    pub ton_pubkey: UInt256,
+pub struct TvmPubkeyConfirmedEvent {
+    #[abi(name = "ton_pubkey")]
+    pub tvm_pubkey: UInt256,
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
-pub struct EthAddressConfirmedEvent {
-    #[abi(with = "uint160_bytes")]
-    pub eth_addr: [u8; 20],
+pub struct EvmAddressConfirmedEvent {
+    #[abi(name = "eth_addr", with = "uint160_bytes")]
+    pub evm_address: [u8; 20],
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
@@ -569,23 +573,23 @@ pub struct DepositProcessedEvent {
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
 pub struct RelayKeysUpdatedEvent {
-    #[abi(uint256)]
-    pub ton_pubkey: UInt256,
-    #[abi(with = "uint160_bytes")]
-    pub eth_address: [u8; 20],
+    #[abi(name = "ton_pubkey")]
+    pub tvm_pubkey: UInt256,
+    #[abi(name = "eth_address", with = "uint160_bytes")]
+    pub evm_address: [u8; 20],
 }
 
 #[derive(Debug, Clone, PackAbiPlain, UnpackAbiPlain, KnownParamTypePlain)]
 pub struct RelayMembershipRequestedEvent {
-    #[abi(uint32)]
+    #[abi]
     pub round_num: u32,
-    #[abi(uint128)]
+    #[abi]
     pub tokens: u128,
-    #[abi(uint256)]
-    pub ton_pubkey: UInt256,
-    #[abi(with = "uint160_bytes")]
-    pub eth_address: [u8; 20],
-    #[abi(uint32)]
+    #[abi(name = "ton_pubkey")]
+    pub tvm_pubkey: UInt256,
+    #[abi(name = "eth_address", with = "uint160_bytes")]
+    pub evm_address: [u8; 20],
+    #[abi]
     pub lock_until: u32,
 }
 
@@ -593,46 +597,18 @@ pub struct RelayMembershipRequestedEvent {
 pub struct RelayRoundDetails {
     #[abi(with = "address_only_hash")]
     pub root: UInt256,
-    #[abi(uint32)]
+    #[abi]
     pub round_num: u32,
-    #[abi(array)]
-    pub ton_keys: Vec<UInt256>,
-    #[abi(with = "array_uint160_bytes")]
-    pub eth_addrs: Vec<[u8; 20]>,
-    #[abi(with = "array_address_only_hash")]
-    pub staker_addrs: Vec<UInt256>,
-    #[abi(with = "array_uint128_number")]
+    #[abi(name = "ton_keys")]
+    pub tvm_keys: Vec<UInt256>,
+    #[abi(name = "eth_addrs", with = "array_uint160_bytes")]
+    pub evm_addresses: Vec<[u8; 20]>,
+    #[abi(with = "array_address_only_hash", name = "staker_addrs")]
+    pub staker_addresses: Vec<UInt256>,
+    #[abi]
     pub staked_tokens: Vec<u128>,
-    #[abi(bool)]
+    #[abi]
     pub relays_installed: bool,
-    #[abi(uint32)]
+    #[abi]
     pub code_version: u32,
-}
-
-pub mod array_uint128_number {
-    use num_traits::ToPrimitive;
-
-    use super::*;
-
-    pub fn unpack(value: &ton_abi::TokenValue) -> UnpackerResult<Vec<u128>> {
-        match value {
-            ton_abi::TokenValue::Array(_, values) => {
-                let mut result = Vec::with_capacity(values.len());
-                for value in values {
-                    result.push(match value {
-                        ton_abi::TokenValue::Uint(ton_abi::Uint { number, size: 128 }) => {
-                            number.to_u128().ok_or(UnpackerError::InvalidAbi)?
-                        }
-                        _ => return Err(UnpackerError::InvalidAbi),
-                    });
-                }
-                Ok(result)
-            }
-            _ => Err(UnpackerError::InvalidAbi),
-        }
-    }
-
-    pub fn param_type() -> ton_abi::ParamType {
-        ton_abi::ParamType::Array(Box::new(ton_abi::ParamType::Uint(128)))
-    }
 }

@@ -24,7 +24,7 @@ chrono = "0.4.19"
 dashmap = "5.3"
 dialoguer = "0.10.0"
 either = "1.6.1"
-everscale-rpc-client = { git = "https://github.com/broxus/everscale-jrpc.git", version = "0.6.1" }
+tvm-rpc-client = { package = "everscale-rpc-client", git = "https://github.com/broxus/everscale-jrpc.git", version = "0.6.1" }
 futures-util = "0.3"
 hex = "0.4"
 tracing = "0.1"
@@ -56,7 +56,7 @@ ed25519-dalek = { git = "https://github.com/broxus/ed25519-dalek.git" }
 tiny-bip39 = { git = "https://github.com/broxus/tiny-bip39.git" }
 tiny-hderive = { git = "https://github.com/broxus/tiny-hderive.git" }
 
-# ETH
+# EVM
 web3 = { version = "0.18.0", default-features = false, features = ["http-rustls-tls", "signing"] }
 ethabi = "16.0.0"
 
@@ -65,13 +65,13 @@ solana-sdk = { git = 'https://github.com/broxus/solana', branch = 'broxus' }
 solana-client = { git = 'https://github.com/broxus/solana', branch = 'broxus' }
 solana-transaction-status = { git = 'https://github.com/broxus/solana', branch = 'broxus' }
 
-# TON specific dependencies
+# TVM specific dependencies
 ton_block = { git = "https://github.com/broxus/ton-labs-block" }
 ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 ton_executor = { git = "https://github.com/broxus/ton-labs-executor" }
 
-eth-ton-abi-converter = { git = "https://github.com/broxus/eth-ton-abi-converter.git" }
+evm-tvm-abi-converter = { package = "eth-ton-abi-converter", git = "https://github.com/broxus/eth-ton-abi-converter.git" }
 
 # Solana Bridge
 solana-bridge = { git = "https://github.com/broxus/octusbridge-solana-contracts.git" }

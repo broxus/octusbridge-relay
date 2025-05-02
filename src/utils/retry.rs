@@ -68,11 +68,11 @@ pub fn generate_fixed_timeout_config(
 }
 
 #[derive(Clone)]
-pub struct SolRpcBackoffStrategy {
+pub struct SvmRpcBackoffStrategy {
     inner: ExponentialBackoff,
 }
 
-impl<'a> BackoffStrategy<'a, ClientError> for SolRpcBackoffStrategy {
+impl<'a> BackoffStrategy<'a, ClientError> for SvmRpcBackoffStrategy {
     type Output = RetryPolicy;
 
     fn delay(&mut self, attempt: u32, error: &'a ClientError) -> Self::Output {
@@ -101,13 +101,13 @@ impl<'a> BackoffStrategy<'a, ClientError> for SolRpcBackoffStrategy {
 }
 
 #[inline]
-pub fn generate_sol_rpc_backoff_config(
+pub fn generate_svm_rpc_backoff_config(
     total_time: Duration,
-) -> RetryFutureConfig<SolRpcBackoffStrategy, NoOnRetry> {
+) -> RetryFutureConfig<SvmRpcBackoffStrategy, NoOnRetry> {
     let max_delay = Duration::from_secs(600);
     let times = calculate_times_from_max_delay(Duration::from_secs(1), 2f64, max_delay, total_time);
     tryhard::RetryFutureConfig::new(times)
-        .custom_backoff(SolRpcBackoffStrategy {
+        .custom_backoff(SvmRpcBackoffStrategy {
             inner: ExponentialBackoff::new(Duration::from_secs(1)),
         })
         .max_delay(Duration::from_secs(600))
@@ -135,14 +135,14 @@ pub fn calculate_times_from_max_delay(
 }
 
 pub enum NetworkType {
-    SOL,
+    SVM,
     EVM(u32),
 }
 
 impl std::fmt::Debug for NetworkType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            NetworkType::SOL => write!(f, "SOL"),
+            NetworkType::SVM => write!(f, "SVM"),
             NetworkType::EVM(chain_id) => write!(f, "EVM-{chain_id}"),
         }
     }

@@ -7,9 +7,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use borsh::BorshDeserialize;
-use eth_ton_abi_converter::{
-    decode_ton_event_abi, make_mapped_ton_event, map_ton_tokens_to_eth_bytes, EthEventAbi,
-    EthToTonMappingContext,
+#[allow(unused_imports)]
+use evm_tvm_abi_converter::{
+    decode_ton_event_abi as decode_tvm_event_abi, make_mapped_ton_event as make_mapped_tvm_event,
+    map_ton_tokens_to_eth_bytes as map_tvm_tokens_to_evm_bytes, EthEventAbi as EvmEventAbi,
+    EthToTonMappingContext as EvmToTvmMappingContext, TonToEthContext as TvmToEvmContext,
 };
 use nekoton_abi::*;
 use nekoton_utils::TrustMe;
@@ -27,9 +29,9 @@ use ton_abi::TokenValue;
 use ton_types::UInt256;
 
 use crate::engine::keystore::*;
-use crate::engine::sol_subscriber::*;
-use crate::engine::ton_contracts::*;
-use crate::engine::ton_subscriber::*;
+use crate::engine::svm_subscriber::*;
+use crate::engine::tvm_contracts::*;
+use crate::engine::tvm_subscriber::*;
 use crate::engine::EngineContext;
 use crate::utils::*;
 
@@ -45,28 +47,28 @@ pub struct Bridge {
     /// Known contracts
     state: RwLock<BridgeState>,
 
-    // Observers for pending ETH->TON events
-    eth_ton_events_state: Arc<EventsState<EthTonEvent>>,
+    // Observers for pending EVM->TVM events
+    evm_tvm_events_state: Arc<EventsState<EvmTvmEvent>>,
 
-    // Observers for pending TON->ETH events
-    ton_eth_events_state: Arc<EventsState<TonEthEvent>>,
+    // Observers for pending TVM->EVM events
+    tvm_evm_events_state: Arc<EventsState<TvmEvmEvent>>,
 
-    // Observers for pending SOL->TON events
-    sol_ton_events_state: Arc<EventsState<SolTonEvent>>,
+    // Observers for pending SVM->TVM events
+    svm_tvm_events_state: Arc<EventsState<SvmTvmEvent>>,
 
-    // Observers for pending TON->SOL events
-    ton_sol_events_state: Arc<EventsState<TonSolEvent>>,
+    // Observers for pending TVM->SVM events
+    tvm_svm_events_state: Arc<EventsState<TvmSvmEvent>>,
 
     connectors_tx: AccountEventsTx<ConnectorEvent>,
-    eth_ton_event_configurations_tx: AccountEventsTx<EthTonEventConfigurationEvent>,
-    ton_eth_event_configurations_tx: AccountEventsTx<TonEthEventConfigurationEvent>,
-    sol_ton_event_configurations_tx: AccountEventsTx<SolTonEventConfigurationEvent>,
-    ton_sol_event_configurations_tx: AccountEventsTx<TonSolEventConfigurationEvent>,
+    evm_tvm_event_configurations_tx: AccountEventsTx<EvmTvmEventConfigurationEvent>,
+    tvm_evm_event_configurations_tx: AccountEventsTx<TvmEvmEventConfigurationEvent>,
+    svm_tvm_event_configurations_tx: AccountEventsTx<SvmTvmEventConfigurationEvent>,
+    tvm_svm_event_configurations_tx: AccountEventsTx<TvmSvmEventConfigurationEvent>,
 
-    total_active_eth_ton_event_configurations: AtomicUsize,
-    total_active_ton_eth_event_configurations: AtomicUsize,
-    total_active_sol_ton_event_configurations: AtomicUsize,
-    total_active_ton_sol_event_configurations: AtomicUsize,
+    total_active_evm_tvm_event_configurations: AtomicUsize,
+    total_active_tvm_evm_event_configurations: AtomicUsize,
+    total_active_svm_tvm_event_configurations: AtomicUsize,
+    total_active_tvm_svm_event_configurations: AtomicUsize,
 }
 
 impl Bridge {
@@ -74,18 +76,18 @@ impl Bridge {
         // Create bridge
         let (bridge_events_tx, bridge_events_rx) = mpsc::unbounded_channel();
         let (connectors_tx, connectors_rx) = mpsc::unbounded_channel();
-        let (eth_ton_event_configurations_tx, eth_ton_event_configurations_rx) =
+        let (evm_tvm_event_configurations_tx, evm_tvm_event_configurations_rx) =
             mpsc::unbounded_channel();
-        let (ton_eth_event_configurations_tx, ton_eth_event_configurations_rx) =
+        let (tvm_evm_event_configurations_tx, tvm_evm_event_configurations_rx) =
             mpsc::unbounded_channel();
-        let (sol_ton_event_configurations_tx, sol_ton_event_configurations_rx) =
+        let (svm_tvm_event_configurations_tx, svm_tvm_event_configurations_rx) =
             mpsc::unbounded_channel();
-        let (ton_sol_event_configurations_tx, ton_sol_event_configurations_rx) =
+        let (tvm_svm_event_configurations_tx, tvm_svm_event_configurations_rx) =
             mpsc::unbounded_channel();
-        let (eth_ton_events_tx, eth_ton_events_rx) = mpsc::unbounded_channel();
-        let (ton_eth_events_tx, ton_eth_events_rx) = mpsc::unbounded_channel();
-        let (sol_ton_events_tx, sol_ton_events_rx) = mpsc::unbounded_channel();
-        let (ton_sol_events_tx, ton_sol_events_rx) = mpsc::unbounded_channel();
+        let (evm_tvm_events_tx, evm_tvm_events_rx) = mpsc::unbounded_channel();
+        let (tvm_evm_events_tx, tvm_evm_events_rx) = mpsc::unbounded_channel();
+        let (svm_tvm_events_tx, svm_tvm_events_rx) = mpsc::unbounded_channel();
+        let (tvm_svm_events_tx, tvm_svm_events_rx) = mpsc::unbounded_channel();
 
         let bridge_observer = AccountObserver::new(&bridge_events_tx);
 
@@ -94,19 +96,19 @@ impl Bridge {
             bridge_account,
             bridge_observer: bridge_observer.clone(),
             state: Default::default(),
-            eth_ton_events_state: EventsState::new(eth_ton_events_tx),
-            ton_eth_events_state: EventsState::new(ton_eth_events_tx),
-            sol_ton_events_state: EventsState::new(sol_ton_events_tx),
-            ton_sol_events_state: EventsState::new(ton_sol_events_tx),
+            evm_tvm_events_state: EventsState::new(evm_tvm_events_tx),
+            tvm_evm_events_state: EventsState::new(tvm_evm_events_tx),
+            svm_tvm_events_state: EventsState::new(svm_tvm_events_tx),
+            tvm_svm_events_state: EventsState::new(tvm_svm_events_tx),
             connectors_tx,
-            eth_ton_event_configurations_tx,
-            ton_eth_event_configurations_tx,
-            sol_ton_event_configurations_tx,
-            ton_sol_event_configurations_tx,
-            total_active_eth_ton_event_configurations: Default::default(),
-            total_active_ton_eth_event_configurations: Default::default(),
-            total_active_sol_ton_event_configurations: Default::default(),
-            total_active_ton_sol_event_configurations: Default::default(),
+            evm_tvm_event_configurations_tx,
+            tvm_evm_event_configurations_tx,
+            svm_tvm_event_configurations_tx,
+            tvm_svm_event_configurations_tx,
+            total_active_evm_tvm_event_configurations: Default::default(),
+            total_active_tvm_evm_event_configurations: Default::default(),
+            total_active_svm_tvm_event_configurations: Default::default(),
+            total_active_tvm_svm_event_configurations: Default::default(),
         });
 
         // Prepare listeners
@@ -126,68 +128,68 @@ impl Bridge {
 
         start_listening_events(
             &bridge,
-            "EthEventConfigurationContract",
-            eth_ton_event_configurations_rx,
-            Self::process_eth_ton_event_configuration_event,
+            "EvmTvmEventConfigurationContract",
+            evm_tvm_event_configurations_rx,
+            Self::process_evm_tvm_event_configuration_event,
         );
 
         start_listening_events(
             &bridge,
-            "TonEthEventConfigurationContract",
-            ton_eth_event_configurations_rx,
-            Self::process_ton_eth_event_configuration_event,
+            "TvmEvmEventConfigurationContract",
+            tvm_evm_event_configurations_rx,
+            Self::process_tvm_evm_event_configuration_event,
         );
 
-        if bridge.context.sol_subscriber.is_some() {
+        if bridge.context.svm_subscriber.is_some() {
             start_listening_events(
                 &bridge,
-                "SolTonEventConfigurationContract",
-                sol_ton_event_configurations_rx,
-                Self::process_sol_ton_event_configuration_event,
+                "SvmTvmEventConfigurationContract",
+                svm_tvm_event_configurations_rx,
+                Self::process_svm_tvm_event_configuration_event,
             );
 
             start_listening_events(
                 &bridge,
-                "TonSolEventConfigurationContract",
-                ton_sol_event_configurations_rx,
-                Self::process_ton_sol_event_configuration_event,
+                "TvmSvmEventConfigurationContract",
+                tvm_svm_event_configurations_rx,
+                Self::process_tvm_svm_event_configuration_event,
             );
         }
 
         start_listening_events(
             &bridge,
-            "EthTonEventContract",
-            eth_ton_events_rx,
-            Self::process_eth_ton_event,
+            "EvmTvmEventContract",
+            evm_tvm_events_rx,
+            Self::process_evm_tvm_event,
         );
 
         start_listening_events(
             &bridge,
-            "TonEthEventContract",
-            ton_eth_events_rx,
-            Self::process_ton_eth_event,
+            "TvmEvmEventContract",
+            tvm_evm_events_rx,
+            Self::process_tvm_evm_event,
         );
 
-        if bridge.context.sol_subscriber.is_some() {
+        if bridge.context.svm_subscriber.is_some() {
             start_listening_events(
                 &bridge,
-                "SolTonEventContract",
-                sol_ton_events_rx,
-                Self::process_sol_ton_event,
+                "SvmTvmEventContract",
+                svm_tvm_events_rx,
+                Self::process_svm_tvm_event,
             );
 
             start_listening_events(
                 &bridge,
-                "TonSolEventContract",
-                ton_sol_events_rx,
-                Self::process_ton_sol_event,
+                "TvmSvmEventContract",
+                tvm_svm_events_rx,
+                Self::process_tvm_svm_event,
             );
         }
 
         // Subscribe bridge account to transactions
         bridge
             .context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([bridge.bridge_account], &bridge.bridge_observer)
             .await;
 
@@ -202,21 +204,21 @@ impl Bridge {
 
     pub fn metrics(&self) -> BridgeMetrics {
         BridgeMetrics {
-            pending_eth_ton_event_count: self.eth_ton_events_state.count.load(Ordering::Acquire),
-            pending_ton_eth_event_count: self.ton_eth_events_state.count.load(Ordering::Acquire),
-            pending_sol_ton_event_count: self.sol_ton_events_state.count.load(Ordering::Acquire),
-            pending_ton_sol_event_count: self.ton_sol_events_state.count.load(Ordering::Acquire),
-            total_active_eth_ton_event_configurations: self
-                .total_active_eth_ton_event_configurations
+            pending_evm_tvm_event_count: self.evm_tvm_events_state.count.load(Ordering::Acquire),
+            pending_tvm_evm_event_count: self.tvm_evm_events_state.count.load(Ordering::Acquire),
+            pending_svm_tvm_event_count: self.svm_tvm_events_state.count.load(Ordering::Acquire),
+            pending_tvm_svm_event_count: self.tvm_svm_events_state.count.load(Ordering::Acquire),
+            total_active_evm_tvm_event_configurations: self
+                .total_active_evm_tvm_event_configurations
                 .load(Ordering::Acquire),
-            total_active_ton_eth_event_configurations: self
-                .total_active_ton_eth_event_configurations
+            total_active_tvm_evm_event_configurations: self
+                .total_active_tvm_evm_event_configurations
                 .load(Ordering::Acquire),
-            total_active_sol_ton_event_configurations: self
-                .total_active_sol_ton_event_configurations
+            total_active_svm_tvm_event_configurations: self
+                .total_active_svm_tvm_event_configurations
                 .load(Ordering::Acquire),
-            total_active_ton_sol_event_configurations: self
-                .total_active_ton_sol_event_configurations
+            total_active_tvm_svm_event_configurations: self
+                .total_active_tvm_svm_event_configurations
                 .load(Ordering::Acquire),
         }
     }
@@ -237,7 +239,7 @@ impl Bridge {
 
                         // Subscribe observer to transactions
                         self.context
-                            .ton_subscriber
+                            .tvm_subscriber
                             .add_transactions_subscription([event.connector], entry)
                             .await;
                     }
@@ -271,31 +273,31 @@ impl Bridge {
         }
     }
 
-    async fn process_eth_ton_event_configuration_event(
+    async fn process_evm_tvm_event_configuration_event(
         self: Arc<Self>,
-        (account, event): (UInt256, EthTonEventConfigurationEvent),
+        (account, event): (UInt256, EvmTvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
             // Create observer on each deployment event
-            EthTonEventConfigurationEvent::EventsDeployed { events } => {
+            EvmTvmEventConfigurationEvent::EventsDeployed { events } => {
                 for address in events {
                     if self
-                        .add_pending_event(address, &self.eth_ton_events_state)
+                        .add_pending_event(address, &self.evm_tvm_events_state)
                         .await
                     {
                         let this = self.clone();
-                        self.spawn_background_task("preprocess ETH->TON event", async move {
-                            this.preprocess_event(address, &this.eth_ton_events_state)
+                        self.spawn_background_task("preprocess EVM->TVM event", async move {
+                            this.preprocess_event(address, &this.evm_tvm_events_state)
                                 .await
                         });
                     }
                 }
             }
             // Update configuration state
-            EthTonEventConfigurationEvent::SetEndBlockNumber { end_block_number } => {
+            EvmTvmEventConfigurationEvent::SetEndBlockNumber { end_block_number } => {
                 let mut state = self.state.write().await;
                 let configuration = state
-                    .eth_ton_event_configurations
+                    .evm_tvm_event_configurations
                     .get_mut(&account)
                     .ok_or(BridgeError::UnknownConfiguration)?;
                 configuration.details.network_configuration.end_block_number = end_block_number;
@@ -304,24 +306,24 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_ton_eth_event_configuration_event(
+    async fn process_tvm_evm_event_configuration_event(
         self: Arc<Self>,
-        (account, event): (UInt256, TonEthEventConfigurationEvent),
+        (account, event): (UInt256, TvmEvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
             // Create observer on each deployment event
-            TonEthEventConfigurationEvent::EventDeployed { address, .. } => {
+            TvmEvmEventConfigurationEvent::EventDeployed { address, .. } => {
                 if self
-                    .add_pending_event(address, &self.ton_eth_events_state)
+                    .add_pending_event(address, &self.tvm_evm_events_state)
                     .await
                 {
                     let this = self.clone();
-                    self.spawn_background_task("preprocess TON->ETH event", async move {
-                        this.preprocess_event(address, &this.ton_eth_events_state)
+                    self.spawn_background_task("preprocess TVM->EVM event", async move {
+                        this.preprocess_event(address, &this.tvm_evm_events_state)
                             .await
                     });
                 } else {
-                    // NOTE: Each TON event must be unique on the contracts level,
+                    // NOTE: Each TVM event must be unique on the contracts level,
                     // so receiving message with duplicated address is
                     // a signal that something went wrong
                     tracing::warn!(
@@ -332,10 +334,10 @@ impl Bridge {
                 }
             }
             // Update configuration state
-            TonEthEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
+            TvmEvmEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
                 let mut state = self.state.write().await;
                 let configuration = state
-                    .ton_eth_event_configurations
+                    .tvm_evm_event_configurations
                     .get_mut(&account)
                     .ok_or(BridgeError::UnknownConfiguration)?;
                 configuration.details.network_configuration.end_timestamp = end_timestamp;
@@ -344,31 +346,31 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_sol_ton_event_configuration_event(
+    async fn process_svm_tvm_event_configuration_event(
         self: Arc<Self>,
-        (account, event): (UInt256, SolTonEventConfigurationEvent),
+        (account, event): (UInt256, SvmTvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
             // Create observer on each deployment event
-            SolTonEventConfigurationEvent::EventsDeployed { events } => {
+            SvmTvmEventConfigurationEvent::EventsDeployed { events } => {
                 for address in events {
                     if self
-                        .add_pending_event(address, &self.sol_ton_events_state)
+                        .add_pending_event(address, &self.svm_tvm_events_state)
                         .await
                     {
                         let this = self.clone();
-                        self.spawn_background_task("preprocess SOL->TON event", async move {
-                            this.preprocess_event(address, &this.sol_ton_events_state)
+                        self.spawn_background_task("preprocess SVM->TVM event", async move {
+                            this.preprocess_event(address, &this.svm_tvm_events_state)
                                 .await
                         });
                     }
                 }
             }
             // Update configuration state
-            SolTonEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
+            SvmTvmEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
                 let mut state = self.state.write().await;
                 let configuration = state
-                    .sol_ton_event_configurations
+                    .svm_tvm_event_configurations
                     .get_mut(&account)
                     .ok_or(BridgeError::UnknownConfiguration)?;
                 configuration.details.network_configuration.end_timestamp = end_timestamp;
@@ -377,24 +379,24 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_ton_sol_event_configuration_event(
+    async fn process_tvm_svm_event_configuration_event(
         self: Arc<Self>,
-        (account, event): (UInt256, TonSolEventConfigurationEvent),
+        (account, event): (UInt256, TvmSvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
             // Create observer on each deployment event
-            TonSolEventConfigurationEvent::EventDeployed { address, .. } => {
+            TvmSvmEventConfigurationEvent::EventDeployed { address, .. } => {
                 if self
-                    .add_pending_event(address, &self.ton_sol_events_state)
+                    .add_pending_event(address, &self.tvm_svm_events_state)
                     .await
                 {
                     let this = self.clone();
-                    self.spawn_background_task("preprocess TON->SOL event", async move {
-                        this.preprocess_event(address, &this.ton_sol_events_state)
+                    self.spawn_background_task("preprocess TVM->SVM event", async move {
+                        this.preprocess_event(address, &this.tvm_svm_events_state)
                             .await
                     });
                 } else {
-                    // NOTE: Each TON event must be unique on the contracts level,
+                    // NOTE: Each TVM event must be unique on the contracts level,
                     // so receiving message with duplicated address is
                     // a signal that something went wrong
                     tracing::warn!(
@@ -405,10 +407,10 @@ impl Bridge {
                 }
             }
             // Update configuration state
-            TonSolEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
+            TvmSvmEventConfigurationEvent::SetEndTimestamp { end_timestamp } => {
                 let mut state = self.state.write().await;
                 let configuration = state
-                    .ton_sol_event_configurations
+                    .tvm_svm_event_configurations
                     .get_mut(&account)
                     .ok_or(BridgeError::UnknownConfiguration)?;
                 configuration.details.network_configuration.end_timestamp = end_timestamp;
@@ -417,19 +419,19 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_eth_ton_event(
+    async fn process_evm_tvm_event(
         self: Arc<Self>,
-        (account, event): (UInt256, (EthTonEvent, EventStatus)),
+        (account, event): (UInt256, (EvmTvmEvent, EventStatus)),
     ) -> Result<()> {
         use dashmap::mapref::entry::Entry;
 
-        let our_public_key = self.context.keystore.ton.public_key();
+        let our_public_key = self.context.keystore.tvm.public_key();
 
         // Use flag to update counter outside events map lock to reduce its duration
         let mut event_removed = false;
 
-        // Handle only known ETH events
-        if let Entry::Occupied(entry) = self.eth_ton_events_state.pending.entry(account) {
+        // Handle only known EVM events
+        if let Entry::Occupied(entry) = self.evm_tvm_events_state.pending.entry(account) {
             let remove_entry = || {
                 // Remove pending event
                 entry.remove();
@@ -438,23 +440,23 @@ impl Bridge {
 
             match event {
                 // Remove event if voting process was finished
-                (EthTonEvent::Rejected, _)
+                (EvmTvmEvent::Rejected, _)
                 | (_, EventStatus::Confirmed | EventStatus::Rejected) => remove_entry(),
                 // Handle event initialization
-                (EthTonEvent::ReceiveRoundRelays { keys }, _) => {
+                (EvmTvmEvent::ReceiveRoundRelays { keys }, _) => {
                     // Check if event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
-                            "update ETH->TON event",
-                            self.clone().update_eth_ton_event(account),
+                            "update EVM->TVM event",
+                            self.clone().update_evm_tvm_event(account),
                         );
                     } else {
                         remove_entry();
                     }
                 }
                 // Handle our confirmation or rejection
-                (EthTonEvent::Confirm { public_key } | EthTonEvent::Reject { public_key }, _)
+                (EvmTvmEvent::Confirm { public_key } | EvmTvmEvent::Reject { public_key }, _)
                     if public_key == our_public_key =>
                 {
                     remove_entry()
@@ -465,7 +467,7 @@ impl Bridge {
 
         // Update metrics
         if event_removed {
-            self.eth_ton_events_state
+            self.evm_tvm_events_state
                 .count
                 .fetch_sub(1, Ordering::Release);
         }
@@ -473,19 +475,19 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_ton_eth_event(
+    async fn process_tvm_evm_event(
         self: Arc<Self>,
-        (account, event): (UInt256, (TonEthEvent, EventStatus)),
+        (account, event): (UInt256, (TvmEvmEvent, EventStatus)),
     ) -> Result<()> {
         use dashmap::mapref::entry::Entry;
 
-        let our_public_key = self.context.keystore.ton.public_key();
+        let our_public_key = self.context.keystore.tvm.public_key();
 
         // Use flag to update counter outside events map lock to reduce its duration
         let mut event_removed = false;
 
-        // Handle only known TON events
-        if let Entry::Occupied(entry) = self.ton_eth_events_state.pending.entry(account) {
+        // Handle only known TVM events
+        if let Entry::Occupied(entry) = self.tvm_evm_events_state.pending.entry(account) {
             let remove_entry = || {
                 // Remove pending event
                 entry.remove();
@@ -501,24 +503,24 @@ impl Bridge {
                 // This state can be achieved by calling `close` method on transfer contract
                 // or execution `confirm` or `reject` after several years so that the cost of
                 // keeping the contract almost nullifies its balance.
-                (TonEthEvent::Closed, EventStatus::Confirmed) => remove_entry(),
+                (TvmEvmEvent::Closed, EventStatus::Confirmed) => remove_entry(),
                 // Remove event if it was rejected
-                (TonEthEvent::Rejected, _) | (_, EventStatus::Rejected) => remove_entry(),
+                (TvmEvmEvent::Rejected, _) | (_, EventStatus::Rejected) => remove_entry(),
                 // Handle event initialization
-                (TonEthEvent::ReceiveRoundRelays { keys }, _) => {
+                (TvmEvmEvent::ReceiveRoundRelays { keys }, _) => {
                     // Check if event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
-                            "update TON->ETH event",
-                            self.clone().update_ton_eth_event(account),
+                            "update TVM->EVM event",
+                            self.clone().update_tvm_evm_event(account),
                         );
                     } else {
                         remove_entry();
                     }
                 }
                 // Handle our confirmation or rejection
-                (TonEthEvent::Confirm { public_key } | TonEthEvent::Reject { public_key }, _)
+                (TvmEvmEvent::Confirm { public_key } | TvmEvmEvent::Reject { public_key }, _)
                     if public_key == our_public_key =>
                 {
                     remove_entry();
@@ -529,7 +531,7 @@ impl Bridge {
 
         // Update metrics
         if event_removed {
-            self.ton_eth_events_state
+            self.tvm_evm_events_state
                 .count
                 .fetch_sub(1, Ordering::Release);
         }
@@ -537,19 +539,19 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_sol_ton_event(
+    async fn process_svm_tvm_event(
         self: Arc<Self>,
-        (account, event): (UInt256, (SolTonEvent, EventStatus)),
+        (account, event): (UInt256, (SvmTvmEvent, EventStatus)),
     ) -> Result<()> {
         use dashmap::mapref::entry::Entry;
 
-        let our_public_key = self.context.keystore.sol.public_key_bytes();
+        let our_public_key = self.context.keystore.svm.public_key_bytes();
 
         // Use flag to update counter outside events map lock to reduce its duration
         let mut event_removed = false;
 
-        // Handle only known SOL events
-        if let Entry::Occupied(entry) = self.sol_ton_events_state.pending.entry(account) {
+        // Handle only known SVM events
+        if let Entry::Occupied(entry) = self.svm_tvm_events_state.pending.entry(account) {
             let remove_entry = || {
                 // Remove pending event
                 entry.remove();
@@ -558,23 +560,23 @@ impl Bridge {
 
             match event {
                 // Remove event if voting process was finished
-                (SolTonEvent::Rejected, _)
+                (SvmTvmEvent::Rejected, _)
                 | (_, EventStatus::Confirmed | EventStatus::Rejected) => remove_entry(),
                 // Handle event initialization
-                (SolTonEvent::ReceiveRoundRelays { keys }, _) => {
+                (SvmTvmEvent::ReceiveRoundRelays { keys }, _) => {
                     // Check if event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
-                            "update SOL->TON event",
-                            self.clone().update_sol_ton_event(account),
+                            "update SVM->TVM event",
+                            self.clone().update_svm_tvm_event(account),
                         );
                     } else {
                         remove_entry();
                     }
                 }
                 // Handle our confirmation or rejection
-                (SolTonEvent::Confirm { public_key } | SolTonEvent::Reject { public_key }, _)
+                (SvmTvmEvent::Confirm { public_key } | SvmTvmEvent::Reject { public_key }, _)
                     if public_key == our_public_key =>
                 {
                     remove_entry()
@@ -585,7 +587,7 @@ impl Bridge {
 
         // Update metrics
         if event_removed {
-            self.sol_ton_events_state
+            self.svm_tvm_events_state
                 .count
                 .fetch_sub(1, Ordering::Release);
         }
@@ -593,19 +595,19 @@ impl Bridge {
         Ok(())
     }
 
-    async fn process_ton_sol_event(
+    async fn process_tvm_svm_event(
         self: Arc<Self>,
-        (account, event): (UInt256, (TonSolEvent, EventStatus)),
+        (account, event): (UInt256, (TvmSvmEvent, EventStatus)),
     ) -> Result<()> {
         use dashmap::mapref::entry::Entry;
 
-        let our_public_key = self.context.keystore.ton.public_key();
+        let our_public_key = self.context.keystore.tvm.public_key();
 
         // Use flag to update counter outside events map lock to reduce its duration
         let mut event_removed = false;
 
-        // Handle only known TON events
-        if let Entry::Occupied(entry) = self.ton_sol_events_state.pending.entry(account) {
+        // Handle only known TVM events
+        if let Entry::Occupied(entry) = self.tvm_svm_events_state.pending.entry(account) {
             let remove_entry = || {
                 // Remove pending event
                 entry.remove();
@@ -621,25 +623,25 @@ impl Bridge {
                 // This state can be achieved by calling `close` method on transfer contract
                 // or execution `confirm` or `reject` after several years so that the cost of
                 // keeping the contract almost nullifies its balance.
-                (TonSolEvent::Closed, EventStatus::Confirmed) => remove_entry(),
+                (TvmSvmEvent::Closed, EventStatus::Confirmed) => remove_entry(),
                 // Remove event if it was rejected
-                (TonSolEvent::Rejected, _) | (_, EventStatus::Rejected) => remove_entry(),
+                (TvmSvmEvent::Rejected, _) | (_, EventStatus::Rejected) => remove_entry(),
 
                 // Handle event initialization
-                (TonSolEvent::ReceiveRoundRelays { keys }, _) => {
+                (TvmSvmEvent::ReceiveRoundRelays { keys }, _) => {
                     // Check if event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
-                            "update TON->SOL event",
-                            self.clone().update_ton_sol_event(account),
+                            "update TVM->SVM event",
+                            self.clone().update_tvm_svm_event(account),
                         );
                     } else {
                         remove_entry();
                     }
                 }
                 // Handle our confirmation or rejection
-                (TonSolEvent::Confirm { public_key } | TonSolEvent::Reject { public_key }, _)
+                (TvmSvmEvent::Confirm { public_key } | TvmSvmEvent::Reject { public_key }, _)
                     if public_key == our_public_key =>
                 {
                     remove_entry();
@@ -650,7 +652,7 @@ impl Bridge {
 
         // Update metrics
         if event_removed {
-            self.ton_sol_events_state
+            self.tvm_svm_events_state
                 .count
                 .fetch_sub(1, Ordering::Release);
         }
@@ -665,13 +667,13 @@ impl Bridge {
         state: &EventsState<T>,
     ) -> Result<()> {
         // Wait contract state
-        let ton_subscriber = &self.context.ton_subscriber;
-        let contract = ton_subscriber.wait_contract_state(&account).await?;
+        let tvm_subscriber = &self.context.tvm_subscriber;
+        let contract = tvm_subscriber.wait_contract_state(&account).await?;
         let base_event_contract = EventBaseContract(&contract);
 
         // Check further steps based on event statuses
         match base_event_contract.process(
-            self.context.keystore.ton.public_key(),
+            self.context.keystore.tvm.public_key(),
             T::REQUIRE_ALL_SIGNATURES,
         )? {
             // Event was not activated yet, so it will be processed in
@@ -684,39 +686,39 @@ impl Bridge {
                 Ok(())
             }
             // Start processing event.
-            // NOTE: it is ok to update_ton_event twice because in fact it will
+            // NOTE: it is ok to update_tvm_event twice because in fact it will
             // do something only once
             EventAction::Vote => T::update_event(self.clone(), account).await,
         }
     }
 
-    async fn update_eth_ton_event(self: Arc<Self>, account: UInt256) -> Result<()> {
-        if !self.eth_ton_events_state.start_processing(&account) {
+    async fn update_evm_tvm_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        if !self.evm_tvm_events_state.start_processing(&account) {
             return Ok(());
         }
 
         let keystore = &self.context.keystore;
-        let ton_subscriber = &self.context.ton_subscriber;
-        let eth_subscribers = &self.context.eth_subscribers;
+        let tvm_subscriber = &self.context.tvm_subscriber;
+        let evm_subscribers = &self.context.evm_subscribers;
 
         // Wait contract state
-        let contract = ton_subscriber.wait_contract_state(&account).await?;
+        let contract = tvm_subscriber.wait_contract_state(&account).await?;
 
-        match EventBaseContract(&contract).process(keystore.ton.public_key(), false)? {
+        match EventBaseContract(&contract).process(keystore.tvm.public_key(), false)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
-                self.eth_ton_events_state.remove(&account);
+                self.evm_tvm_events_state.remove(&account);
                 return Ok(());
             }
             EventAction::Vote => { /* continue voting */ }
         }
 
-        let event_init_data = EthTonEventContract(&contract).event_init_data()?;
+        let event_init_data = EvmTvmEventContract(&contract).event_init_data()?;
 
         struct ConfigData {
             chain_id: u32,
             event_emitter: [u8; 20],
-            abi: Arc<EthEventAbi>,
+            abi: Arc<EvmEventAbi>,
             blocks_to_confirm: u16,
             check_token_root: bool,
         }
@@ -725,7 +727,7 @@ impl Bridge {
         let data = {
             let state = self.state.read().await;
             state
-                .eth_ton_event_configurations
+                .evm_tvm_event_configurations
                 .get(&event_init_data.configuration)
                 .map(|configuration| ConfigData {
                     chain_id: configuration.details.network_configuration.chain_id,
@@ -739,9 +741,9 @@ impl Bridge {
                 })
         };
 
-        // NOTE: be sure to drop `eth_event_configurations` lock before that
+        // NOTE: be sure to drop `evm_event_configurations` lock before that
         let (
-            eth_subscriber,
+            evm_subscriber,
             event_emitter,
             event_abi,
             blocks_to_confirm,
@@ -761,13 +763,13 @@ impl Bridge {
                     tracing::info!(
                         event = %DisplayAddr(account),
                         chain_id,
-                        "ETH->TON checking token root for token wallet",
+                        "EVM->TVM checking token root for token wallet",
                     );
-                    let event_decoded_data = EthTonEventContract(&contract).event_decoded_data()?;
+                    let event_decoded_data = EvmTvmEventContract(&contract).event_decoded_data()?;
 
                     let token_root = event_decoded_data.token.address();
                     let token_root = UInt256::from_be_bytes(&token_root.get_bytestring(0));
-                    let root_contract = ton_subscriber.wait_contract_state(&token_root).await?;
+                    let root_contract = tvm_subscriber.wait_contract_state(&token_root).await?;
                     #[cfg(feature = "ton")]
                     let proxy_wallet_address = JettonMinterContract(&root_contract)
                         .get_wallet_address(&event_decoded_data.proxy)?;
@@ -792,14 +794,14 @@ impl Bridge {
                             token_root = %DisplayAddr(token_root),
                             expected_token_wallet = %DisplayAddr(expected),
                             actual_token_wallet = %DisplayAddr(actual),
-                            "ETH->TON wrong token wallet for given token root",
+                            "EVM->TVM wrong token wallet for given token root",
                         );
                         preliminary_checks_succeeded = false;
                     }
                 }
 
                 // Get required subscriber
-                match eth_subscribers.get_subscriber(chain_id) {
+                match evm_subscribers.get_subscriber(chain_id) {
                     Some(subscriber) => (
                         subscriber,
                         event_emitter,
@@ -811,9 +813,9 @@ impl Bridge {
                         tracing::error!(
                             event = %DisplayAddr(account),
                             chain_id,
-                            "ETH->TON subscriber not found for event",
+                            "EVM->TVM subscriber not found for event",
                         );
-                        self.eth_ton_events_state.remove(&account);
+                        self.evm_tvm_events_state.remove(&account);
                         return Ok(());
                     }
                 }
@@ -823,17 +825,17 @@ impl Bridge {
                 tracing::error!(
                     event = %DisplayAddr(account),
                     configuration = %DisplayAddr(event_init_data.configuration),
-                    "ETH->TON event configuration not found for event",
+                    "EVM->TVM event configuration not found for event",
                 );
-                self.eth_ton_events_state.remove(&account);
+                self.evm_tvm_events_state.remove(&account);
                 return Ok(());
             }
         };
 
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
-        // Verify ETH event and create message to event contract
-        let message = match eth_subscriber
+        // Verify EVM event and create message to event contract
+        let message = match evm_subscriber
             .verify(
                 event_init_data.vote_data,
                 event_emitter,
@@ -845,7 +847,7 @@ impl Bridge {
         {
             // Confirm event if transaction was found
             Ok(VerificationStatus::Exists) => {
-                UnsignedMessage::new(eth_ton_event_contract::confirm(), account).arg(account_addr)
+                UnsignedMessage::new(evm_tvm_event_contract::confirm(), account).arg(account_addr)
             }
             // Reject event if transaction not found
             Ok(VerificationStatus::NotExists { reason }) => {
@@ -853,32 +855,32 @@ impl Bridge {
                     event = %DisplayAddr(account),
                     configuration = %DisplayAddr(event_init_data.configuration),
                     reason,
-                    "rejecting ETH->TON event",
+                    "rejecting EVM->TVM event",
                 );
 
-                UnsignedMessage::new(eth_ton_event_contract::reject(), account).arg(account_addr)
+                UnsignedMessage::new(evm_tvm_event_contract::reject(), account).arg(account_addr)
             }
             // Skip event otherwise
             Err(e) => {
-                tracing::error!(event = %DisplayAddr(account), "failed to verify ETH->TON event: {e:?}");
-                self.eth_ton_events_state.remove(&account);
+                tracing::error!(event = %DisplayAddr(account), "failed to verify EVM->TVM event: {e:?}");
+                self.evm_tvm_events_state.remove(&account);
                 return Ok(());
             }
         };
 
         // Clone events observer and deliver message to the contract
-        let eth_ton_event_observer = match self.eth_ton_events_state.pending.get(&account) {
+        let evm_tvm_event_observer = match self.evm_tvm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
         };
-        let eth_ton_events_state = Arc::downgrade(&self.eth_ton_events_state);
+        let evm_tvm_events_state = Arc::downgrade(&self.evm_tvm_events_state);
 
         self.context
             .deliver_message(
-                eth_ton_event_observer,
+                evm_tvm_event_observer,
                 message,
                 // Stop voting for the contract if it was removed
-                move || match eth_ton_events_state.upgrade() {
+                move || match evm_tvm_events_state.upgrade() {
                     Some(state) => state.pending.contains_key(&account),
                     None => false,
                 },
@@ -887,23 +889,23 @@ impl Bridge {
         Ok(())
     }
 
-    async fn update_ton_eth_event(self: Arc<Self>, account: UInt256) -> Result<()> {
-        if !self.ton_eth_events_state.start_processing(&account) {
+    async fn update_tvm_evm_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        if !self.tvm_evm_events_state.start_processing(&account) {
             return Ok(());
         }
 
         let keystore = &self.context.keystore;
-        let ton_subscriber = &self.context.ton_subscriber;
+        let tvm_subscriber = &self.context.tvm_subscriber;
 
         // Wait contract state
-        let contract = ton_subscriber.wait_contract_state(&account).await?;
+        let contract = tvm_subscriber.wait_contract_state(&account).await?;
         let base_event_contract = EventBaseContract(&contract);
 
         // Check further steps based on event statuses
-        match base_event_contract.process(keystore.ton.public_key(), true)? {
+        match base_event_contract.process(keystore.tvm.public_key(), true)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
-                self.ton_eth_events_state.remove(&account);
+                self.tvm_evm_events_state.remove(&account);
                 return Ok(());
             }
             EventAction::Vote => { /* continue voting */ }
@@ -911,7 +913,7 @@ impl Bridge {
         let round_number = base_event_contract.round_number()?;
 
         // Get event details
-        let event_init_data = TonEthEventContract(&contract).event_init_data()?;
+        let event_init_data = TvmEvmEventContract(&contract).event_init_data()?;
 
         struct ConfigData {
             proxy: [u8; 20],
@@ -926,7 +928,7 @@ impl Bridge {
         let data = {
             let state = self.state.read().await;
             state
-                .ton_eth_event_configurations
+                .tvm_evm_event_configurations
                 .get(&event_init_data.configuration)
                 .map(|configuration| ConfigData {
                     proxy: configuration.details.network_configuration.proxy,
@@ -934,10 +936,10 @@ impl Bridge {
                         event_init_data.vote_data.event_data.clone(),
                     )
                     .and_then(|cursor| {
-                        ton_abi::TokenValue::decode_params(
+                        TokenValue::decode_params(
                             &configuration.event_abi,
                             cursor,
-                            &ton_abi::contract::ABI_VERSION_2_2,
+                            &LATEST_ABI_VERSION,
                             false,
                         )
                     }),
@@ -960,9 +962,9 @@ impl Bridge {
                 if verify_token_meta {
                     tracing::info!(
                         event = %DisplayAddr(account),
-                        "TON->ETH checking token meta",
+                        "TVM->EVM checking token meta",
                     );
-                    let event_decoded_data = TonEthEventContract(&contract).event_decoded_data()?;
+                    let event_decoded_data = TvmEvmEventContract(&contract).event_decoded_data()?;
                     let expected_meta = self
                         .context
                         .tokens_meta_client
@@ -975,7 +977,7 @@ impl Bridge {
                             event = %DisplayAddr(account),
                             expected_token_name = expected_meta.name,
                             actual_token_name = event_decoded_data.name,
-                            "TON->ETH token name mismatch",
+                            "TVM->EVM token name mismatch",
                         );
                         meta_mismatch = true;
                     }
@@ -984,7 +986,7 @@ impl Bridge {
                             event = %DisplayAddr(account),
                             expected_token_symbol = expected_meta.symbol,
                             actual_token_symbol = event_decoded_data.symbol,
-                            "TON->ETH token symbol mismatch",
+                            "TVM->EVM token symbol mismatch",
                         );
                         meta_mismatch = true;
                     }
@@ -993,7 +995,7 @@ impl Bridge {
                             event = %DisplayAddr(account),
                             expected_token_decimals = expected_meta.decimals,
                             actual_token_decimals = event_decoded_data.decimals,
-                            "TON->ETH token decimals mismatch",
+                            "TVM->EVM token decimals mismatch",
                         );
                         meta_mismatch = true;
                     }
@@ -1007,10 +1009,10 @@ impl Bridge {
                     Err(err)
                 } else {
                     data.and_then(|data| {
-                        Ok(make_mapped_ton_event(
+                        Ok(make_mapped_tvm_event(
                             event_init_data.vote_data.event_transaction_lt,
                             event_init_data.vote_data.event_timestamp,
-                            map_ton_tokens_to_eth_bytes(data)?,
+                            map_tvm_tokens_to_evm_bytes(data)?,
                             event_init_data.configuration,
                             account,
                             proxy,
@@ -1024,9 +1026,9 @@ impl Bridge {
                 tracing::error!(
                     event = %DisplayAddr(account),
                     configuration = %DisplayAddr(event_init_data.configuration),
-                    "TON->ETH event configuration not found for event",
+                    "TVM->EVM event configuration not found for event",
                 );
-                self.ton_eth_events_state.remove(&account);
+                self.tvm_evm_events_state.remove(&account);
                 return Ok(());
             }
         };
@@ -1041,8 +1043,8 @@ impl Bridge {
                     data = hex::encode(&data),
                     "signing event data"
                 );
-                UnsignedMessage::new(ton_eth_event_contract::confirm(), account)
-                    .arg(keystore.eth.sign(&data).to_vec())
+                UnsignedMessage::new(tvm_evm_event_contract::confirm(), account)
+                    .arg(keystore.evm.sign(&data).to_vec())
                     .arg(account_addr)
             }
 
@@ -1052,23 +1054,23 @@ impl Bridge {
                     event = %DisplayAddr(account),
                     "failed to compute vote data signature: {e:?}",
                 );
-                UnsignedMessage::new(ton_eth_event_contract::reject(), account).arg(account_addr)
+                UnsignedMessage::new(tvm_evm_event_contract::reject(), account).arg(account_addr)
             }
         };
 
         // Clone events observer and deliver message to the contract
-        let ton_eth_event_observer = match self.ton_eth_events_state.pending.get(&account) {
+        let tvm_evm_event_observer = match self.tvm_evm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
         };
-        let ton_eth_events_state = Arc::downgrade(&self.ton_eth_events_state);
+        let tvm_evm_events_state = Arc::downgrade(&self.tvm_evm_events_state);
 
         self.context
             .deliver_message(
-                ton_eth_event_observer,
+                tvm_evm_event_observer,
                 message,
                 // Stop voting for the contract if it was removed
-                move || match ton_eth_events_state.upgrade() {
+                move || match tvm_evm_events_state.upgrade() {
                     Some(state) => state.pending.contains_key(&account),
                     None => false,
                 },
@@ -1077,31 +1079,29 @@ impl Bridge {
         Ok(())
     }
 
-    async fn update_sol_ton_event(self: Arc<Self>, account: UInt256) -> Result<()> {
-        let sol_subscriber = match &self.context.sol_subscriber {
-            // Continue only of SOL subscriber is enabled and it is the first time we started processing this event
-            Some(sol_subscriber) if self.sol_ton_events_state.start_processing(&account) => {
-                sol_subscriber
-            }
+    async fn update_svm_tvm_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let svm_subscriber = match &self.context.svm_subscriber {
+            // Continue only of SVM subscriber is enabled, and it is the first time we started processing this event
+            Some(subscriber) if self.svm_tvm_events_state.start_processing(&account) => subscriber,
             _ => return Ok(()),
         };
 
         let keystore = &self.context.keystore;
-        let ton_subscriber = &self.context.ton_subscriber;
+        let tvm_subscriber = &self.context.tvm_subscriber;
 
         // Wait contract state
-        let contract = ton_subscriber.wait_contract_state(&account).await?;
+        let contract = tvm_subscriber.wait_contract_state(&account).await?;
 
-        match EventBaseContract(&contract).process(keystore.ton.public_key(), false)? {
+        match EventBaseContract(&contract).process(keystore.tvm.public_key(), false)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
-                self.sol_ton_events_state.remove(&account);
+                self.svm_tvm_events_state.remove(&account);
                 return Ok(());
             }
             EventAction::Vote => { /* continue voting */ }
         }
 
-        let event_init_data = SolTonEventContract(&contract).event_init_data()?;
+        let event_init_data = SvmTvmEventContract(&contract).event_init_data()?;
 
         // Find suitable configuration
         // NOTE: be sure to drop `self.state` lock before removing pending ton event.
@@ -1109,7 +1109,7 @@ impl Bridge {
         let data = {
             let state = self.state.read().await;
             state
-                .sol_ton_event_configurations
+                .svm_tvm_event_configurations
                 .get(&event_init_data.configuration)
                 .map(|configuration| {
                     (
@@ -1121,7 +1121,7 @@ impl Bridge {
                             TokenValue::decode_params(
                                 &configuration.event_abi,
                                 cursor,
-                                &ton_abi::contract::ABI_VERSION_2_2,
+                                &LATEST_ABI_VERSION,
                                 false,
                             )
                         }),
@@ -1133,16 +1133,16 @@ impl Bridge {
             // Decode event data with event abi from configuration
             Some((program, data)) => (
                 program,
-                data.and_then(|data| eth_ton_abi_converter::borsh::serialize(&data))?,
+                data.and_then(|data| evm_tvm_abi_converter::borsh::serialize(&data))?,
             ),
             // Do nothing when configuration was not found
             None => {
                 tracing::error!(
                     event = %DisplayAddr(account),
                     configuration = %DisplayAddr(event_init_data.configuration),
-                    "SOL->TON event configuration not found for event",
+                    "SVM->TVM event configuration not found for event",
                 );
-                self.sol_ton_events_state.remove(&account);
+                self.svm_tvm_events_state.remove(&account);
                 return Ok(());
             }
         };
@@ -1152,7 +1152,7 @@ impl Bridge {
 
         let program_id = Pubkey::new_from_array(program.inner());
 
-        let transaction_data = SolTonTransactionData {
+        let transaction_data = SvmTvmTransactionData {
             program_id,
             signature,
             slot: event_init_data.vote_data.slot,
@@ -1160,7 +1160,7 @@ impl Bridge {
             seed: event_init_data.vote_data.account_seed,
         };
 
-        let account_data = SolTonAccountData {
+        let account_data = SvmTvmAccountData {
             program_id,
             seed: event_init_data.vote_data.account_seed,
             event_data: decoded_event_data,
@@ -1168,14 +1168,14 @@ impl Bridge {
 
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
-        // Verify SOL->TON event and create message to event contract
-        let message = match sol_subscriber
-            .verify_sol_ton_event(transaction_data, account_data)
+        // Verify SVM->TVM event and create message to event contract
+        let message = match svm_subscriber
+            .verify_svm_tvm_event(transaction_data, account_data)
             .await
         {
             // Confirm event if transaction was found
             Ok(VerificationStatus::Exists) => {
-                UnsignedMessage::new(sol_ton_event_contract::confirm(), account).arg(account_addr)
+                UnsignedMessage::new(svm_tvm_event_contract::confirm(), account).arg(account_addr)
             }
             // Reject event if transaction not found
             Ok(VerificationStatus::NotExists { reason }) => {
@@ -1183,35 +1183,35 @@ impl Bridge {
                     event = %DisplayAddr(account),
                     configuration = %DisplayAddr(event_init_data.configuration),
                     reason,
-                    "rejecting SOL->TON event",
+                    "rejecting SVM->TVM event",
                 );
 
-                UnsignedMessage::new(sol_ton_event_contract::reject(), account).arg(account_addr)
+                UnsignedMessage::new(svm_tvm_event_contract::reject(), account).arg(account_addr)
             }
             // Skip event otherwise
             Err(e) => {
                 tracing::error!(
                     event = %DisplayAddr(account),
-                    "failed to verify SOL->TON event: {e:?}",
+                    "failed to verify SVM->TVM event: {e:?}",
                 );
-                self.sol_ton_events_state.remove(&account);
+                self.svm_tvm_events_state.remove(&account);
                 return Ok(());
             }
         };
 
         // Clone events observer and deliver message to the contract
-        let sol_ton_event_observer = match self.sol_ton_events_state.pending.get(&account) {
+        let svm_tvm_event_observer = match self.svm_tvm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
         };
-        let sol_ton_events_state = Arc::downgrade(&self.sol_ton_events_state);
+        let svm_tvm_events_state = Arc::downgrade(&self.svm_tvm_events_state);
 
         self.context
             .deliver_message(
-                sol_ton_event_observer,
+                svm_tvm_event_observer,
                 message,
                 // Stop voting for the contract if it was removed
-                move || match sol_ton_events_state.upgrade() {
+                move || match svm_tvm_events_state.upgrade() {
                     Some(state) => state.pending.contains_key(&account),
                     None => false,
                 },
@@ -1221,27 +1221,25 @@ impl Bridge {
         Ok(())
     }
 
-    async fn update_ton_sol_event(self: Arc<Self>, account: UInt256) -> Result<()> {
-        let sol_subscriber = match &self.context.sol_subscriber {
-            // Continue only of SOL subscriber is enabled and it is the first time we started processing this event
-            Some(sol_subscriber) if self.ton_sol_events_state.start_processing(&account) => {
-                sol_subscriber
-            }
+    async fn update_tvm_svm_event(self: Arc<Self>, account: UInt256) -> Result<()> {
+        let svm_subscriber = match &self.context.svm_subscriber {
+            // Continue only of SVM subscriber is enabled, and it is the first time we started processing this event
+            Some(subscriber) if self.tvm_svm_events_state.start_processing(&account) => subscriber,
             _ => return Ok(()),
         };
 
         let keystore = &self.context.keystore;
-        let ton_subscriber = &self.context.ton_subscriber;
+        let tvm_subscriber = &self.context.tvm_subscriber;
 
         // Wait contract state
-        let contract = ton_subscriber.wait_contract_state(&account).await?;
+        let contract = tvm_subscriber.wait_contract_state(&account).await?;
         let base_event_contract = EventBaseContract(&contract);
 
         // Check further steps based on event statuses
-        match base_event_contract.process(keystore.ton.public_key(), true)? {
+        match base_event_contract.process(keystore.tvm.public_key(), true)? {
             EventAction::Nop => return Ok(()),
             EventAction::Remove => {
-                self.ton_sol_events_state.remove(&account);
+                self.tvm_svm_events_state.remove(&account);
                 return Ok(());
             }
             EventAction::Vote => { /* continue voting */ }
@@ -1250,7 +1248,7 @@ impl Bridge {
         let created_at = base_event_contract.created_at()?;
 
         // Get event details
-        let event_init_data = TonSolEventContract(&contract).event_init_data()?;
+        let event_init_data = TvmSvmEventContract(&contract).event_init_data()?;
 
         // Find suitable configuration
         // NOTE: be sure to drop `self.state` lock before removing pending ton event.
@@ -1258,7 +1256,7 @@ impl Bridge {
         let data = {
             let state = self.state.read().await;
             state
-                .ton_sol_event_configurations
+                .tvm_svm_event_configurations
                 .get(&event_init_data.configuration)
                 .map(|configuration| {
                     (
@@ -1280,7 +1278,7 @@ impl Bridge {
                             TokenValue::decode_params(
                                 &configuration.event_abi,
                                 cursor,
-                                &ton_abi::contract::ABI_VERSION_2_2,
+                                &LATEST_ABI_VERSION,
                                 false,
                             )
                         }),
@@ -1310,16 +1308,16 @@ impl Bridge {
                 execute_needed,
                 execute_instruction,
                 execute_payload_instruction,
-                data.and_then(|data| eth_ton_abi_converter::borsh::serialize(&data))?,
+                data.and_then(|data| evm_tvm_abi_converter::borsh::serialize(&data))?,
             ),
             // Do nothing when configuration was not found
             None => {
                 tracing::error!(
                     event = %DisplayAddr(account),
                     configuration = %DisplayAddr(event_init_data.configuration),
-                    "TON->SOL event configuration not found for event",
+                    "TVM->SVM event configuration not found for event",
                 );
-                self.ton_sol_events_state.remove(&account);
+                self.tvm_svm_events_state.remove(&account);
                 return Ok(());
             }
         };
@@ -1336,13 +1334,13 @@ impl Bridge {
             &event_data.to_bytes(),
         );
 
-        let voter_pubkey = self.context.keystore.sol.public_key();
+        let voter_pubkey = self.context.keystore.svm.public_key();
 
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
-        let (sol_message_vote, sol_message_execute, sol_message_execute_payload, ton_message) =
-            match sol_subscriber
-                .verify_ton_sol_event(proposal_pubkey, decoded_event_data, created_at)
+        let (svm_message_vote, svm_message_execute, svm_message_execute_payload, tvm_message) =
+            match svm_subscriber
+                .verify_tvm_svm_event(proposal_pubkey, decoded_event_data, created_at)
                 .await
             {
                 // Confirm event if transaction was found
@@ -1356,11 +1354,11 @@ impl Bridge {
                         solana_bridge::bridge_types::Vote::Confirm,
                     );
 
-                    let sol_message_vote =
+                    let svm_message_vote =
                         solana_sdk::message::Message::new(&[vote_ix], Some(&voter_pubkey));
 
-                    let mut sol_message_execute = None;
-                    let mut sol_message_execute_payload = None;
+                    let mut svm_message_execute = None;
+                    let mut svm_message_execute_payload = None;
                     if execute_needed {
                         let accounts = event_init_data
                             .vote_data
@@ -1382,7 +1380,7 @@ impl Bridge {
                             accounts,
                         );
 
-                        sol_message_execute = Some(solana_sdk::message::Message::new(
+                        svm_message_execute = Some(solana_sdk::message::Message::new(
                             &[execute_ix],
                             Some(&voter_pubkey),
                         ));
@@ -1408,7 +1406,7 @@ impl Bridge {
                                 accounts,
                             );
 
-                            sol_message_execute_payload = Some(solana_sdk::message::Message::new(
+                            svm_message_execute_payload = Some(solana_sdk::message::Message::new(
                                 &[execute_ix],
                                 Some(&voter_pubkey),
                             ));
@@ -1416,13 +1414,13 @@ impl Bridge {
                     }
 
                     let ton_message =
-                        UnsignedMessage::new(ton_sol_event_contract::confirm(), account)
+                        UnsignedMessage::new(tvm_svm_event_contract::confirm(), account)
                             .arg(account_addr);
 
                     (
-                        sol_message_vote,
-                        sol_message_execute,
-                        sol_message_execute_payload,
+                        svm_message_vote,
+                        svm_message_execute,
+                        svm_message_execute_payload,
                         ton_message,
                     )
                 }
@@ -1431,7 +1429,7 @@ impl Bridge {
                         event = %DisplayAddr(account),
                         configuration = %DisplayAddr(event_init_data.configuration),
                         reason,
-                        "rejecting TON->SOL event",
+                        "rejecting TVM->SVM event",
                     );
 
                     let ix = solana_bridge::instructions::vote_for_proposal_ix(
@@ -1442,48 +1440,48 @@ impl Bridge {
                         round_number,
                         solana_bridge::bridge_types::Vote::Reject,
                     );
-                    let sol_message = solana_sdk::message::Message::new(&[ix], Some(&voter_pubkey));
+                    let svm_message = solana_sdk::message::Message::new(&[ix], Some(&voter_pubkey));
 
-                    let ton_message =
-                        UnsignedMessage::new(ton_sol_event_contract::reject(), account)
+                    let tvm_message =
+                        UnsignedMessage::new(tvm_svm_event_contract::reject(), account)
                             .arg(account_addr);
 
-                    (sol_message, None, None, ton_message)
+                    (svm_message, None, None, tvm_message)
                 }
                 // Skip event otherwise
                 Err(e) => {
                     tracing::error!(
                         event = %DisplayAddr(account),
-                        "failed to verify TON->SOL event: {e:?}",
+                        "failed to verify TVM->SVM event: {e:?}",
                     );
-                    self.ton_sol_events_state.remove(&account);
+                    self.tvm_svm_events_state.remove(&account);
                     return Ok(());
                 }
             };
 
-        let rpc_client = sol_subscriber.get_rpc_client()?;
+        let rpc_client = svm_subscriber.get_rpc_client()?;
 
-        if !sol_subscriber
+        if !svm_subscriber
             .is_already_voted(rpc_client, round_number, &proposal_pubkey, &voter_pubkey)
             .await?
         {
             // Extract vote and log it
-            let c_ix = sol_message_vote.instructions.first().trust_me();
+            let c_ix = svm_message_vote.instructions.first().trust_me();
             let ix = solana_bridge::instructions::VoteForProposal::try_from_slice(&c_ix.data)?;
 
             tracing::info!(
                 vote = ?ix.vote,
                 %proposal_pubkey,
-                "voting for solana proposal...",
+                "voting for SVM proposal...",
             );
 
-            // Send confirm/reject to Solana
-            let signature = sol_subscriber
-                .send_message(rpc_client, sol_message_vote, &self.context.keystore)
+            // Send confirm/reject to SVM
+            let signature = svm_subscriber
+                .send_message(rpc_client, svm_message_vote, &self.context.keystore)
                 .await
                 .map_err(parse_client_error)?;
 
-            sol_subscriber
+            svm_subscriber
                 .get_signature_status(rpc_client, &signature)
                 .await
                 .map_err(parse_client_error)?;
@@ -1495,13 +1493,13 @@ impl Bridge {
             );
 
             // Execute proposal
-            if let Some(message) = sol_message_execute {
+            if let Some(message) = svm_message_execute {
                 tracing::info!(
                     %proposal_pubkey,
                     "executing proposal...",
                 );
 
-                match sol_subscriber
+                match svm_subscriber
                     .send_message(rpc_client, message, &self.context.keystore)
                     .await
                     .map_err(parse_client_error)
@@ -1513,13 +1511,13 @@ impl Bridge {
                         );
 
                         // Execute payload
-                        if let Some(message) = sol_message_execute_payload {
+                        if let Some(message) = svm_message_execute_payload {
                             tracing::info!(
                                 %proposal_pubkey,
                                 "executing payload...",
                             );
 
-                            match sol_subscriber
+                            match svm_subscriber
                                 .send_message(rpc_client, message, &self.context.keystore)
                                 .await
                                 .map_err(parse_client_error)
@@ -1533,7 +1531,7 @@ impl Bridge {
                                 Err(e) => {
                                     tracing::error!(
                                         %proposal_pubkey,
-                                        "failed to execute solana payload: {e:?}",
+                                        "failed to execute SVM payload: {e:?}",
                                     );
                                 }
                             }
@@ -1542,7 +1540,7 @@ impl Bridge {
                     Err(e) => {
                         tracing::error!(
                             %proposal_pubkey,
-                            "failed to execute solana proposal: {e:?}",
+                            "failed to execute SVM proposal: {e:?}",
                         );
                     }
                 }
@@ -1550,18 +1548,18 @@ impl Bridge {
         }
 
         // Clone events observer and deliver message to the contract
-        let ton_sol_event_observer = match self.ton_sol_events_state.pending.get(&account) {
+        let tvm_svm_event_observer = match self.tvm_svm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
         };
-        let ton_sol_events_state = Arc::downgrade(&self.ton_sol_events_state);
+        let tvm_svm_events_state = Arc::downgrade(&self.tvm_svm_events_state);
 
         self.context
             .deliver_message(
-                ton_sol_event_observer,
-                ton_message,
+                tvm_svm_event_observer,
+                tvm_message,
                 // Stop voting for the contract if it was removed
-                move || match ton_sol_events_state.upgrade() {
+                move || match tvm_svm_events_state.upgrade() {
                     Some(state) => state.pending.contains_key(&account),
                     None => false,
                 },
@@ -1572,12 +1570,12 @@ impl Bridge {
     }
 
     async fn check_connector_contract(&self, connector_account: UInt256) -> Result<()> {
-        let ton_subscriber = &self.context.ton_subscriber;
+        let tvm_subscriber = &self.context.tvm_subscriber;
 
         // Get event configuration address
         let event_configuration = {
             // Wait until connector contract state is found
-            let contract = ton_subscriber
+            let contract = tvm_subscriber
                 .wait_contract_state(&connector_account)
                 .await?;
 
@@ -1597,7 +1595,7 @@ impl Bridge {
         };
 
         // Wait until event configuration state is found
-        let contract = ton_subscriber
+        let contract = tvm_subscriber
             .wait_contract_state(&event_configuration)
             .await?;
         tracing::info!(
@@ -1619,14 +1617,14 @@ impl Bridge {
         Ok(())
     }
 
-    async fn get_all_configurations(&self) -> anyhow::Result<()> {
+    async fn get_all_configurations(&self) -> Result<()> {
         // Lock state before other logic to make sure that all events
         // will be queued in their handlers
         let mut state = self.state.write().await;
 
-        let ton_subscriber = &self.context.ton_subscriber;
+        let tvm_subscriber = &self.context.tvm_subscriber;
 
-        let contract = ton_subscriber
+        let contract = tvm_subscriber
             .get_contract_state(&self.bridge_account)
             .await
             .context("Failed to get bridge account state")?
@@ -1645,7 +1643,7 @@ impl Bridge {
                 .context("Failed to derive connector address")?;
 
             // Extract details from contract
-            let details = match ton_subscriber
+            let details = match tvm_subscriber
                 .get_contract_state(&connector_account)
                 .await
                 .context("Failed to get connector account state")?
@@ -1684,7 +1682,7 @@ impl Bridge {
             state.connectors.insert(connector_account, observer.clone());
 
             // Subscribe connector for transaction
-            ton_subscriber
+            tvm_subscriber
                 .add_transactions_subscription([connector_account], &observer)
                 .await;
 
@@ -1694,7 +1692,7 @@ impl Bridge {
             }
 
             // Find event configuration contract
-            let configuration_contract = match ton_subscriber
+            let configuration_contract = match tvm_subscriber
                 .get_contract_state(&configuration_account)
                 .await
                 .context("Failed to get configuration state")?
@@ -1758,49 +1756,52 @@ impl Bridge {
         }
 
         match event_type {
-            // Extract and populate ETH->TON event configuration details
-            EventType::EthTon => self
-                .add_eth_ton_event_configuration(
+            // Extract and populate EVM->TVM event configuration details
+            EventType::EvmTvm => self
+                .add_evm_tvm_event_configuration(
                     state,
                     configuration_account,
                     configuration_contract,
                 )
                 .await
-                .context("Failed to add ETH event configuration")?,
-            // Extract and populate TON->ETH event configuration details
-            EventType::TonEth => self
-                .add_ton_eth_event_configuration(
+                .context("Failed to add EVM->TVM event configuration")?,
+            // Extract and populate TVM->EVM event configuration details
+            EventType::TvmEvm => self
+                .add_tvm_evm_event_configuration(
                     state,
                     configuration_account,
                     configuration_contract,
                 )
                 .await
-                .context("Failed to add TON->ETH event configuration")?,
-            // Extract and populate SOL->TON event configuration details
-            EventType::SolTon => self
-                .add_sol_ton_event_configuration(
+                .context("Failed to add TVM->EVM event configuration")?,
+            // Extract and populate SVM->TVM event configuration details
+            EventType::SvmTvm => self
+                .add_svm_tvm_event_configuration(
                     state,
                     configuration_account,
                     configuration_contract,
                 )
                 .await
-                .context("Failed to add SOL->TON event configuration")?,
-            // Extract and populate TON->SOL event configuration details
-            EventType::TonSol => self
-                .add_ton_sol_event_configuration(
+                .context("Failed to add SVM->TVM event configuration")?,
+            // Extract and populate TVM->SVM event configuration details
+            EventType::TvmSvm => self
+                .add_tvm_svm_event_configuration(
                     state,
                     configuration_account,
                     configuration_contract,
                 )
                 .await
-                .context("Failed to add TON->SOL event configuration")?,
+                .context("Failed to add TVM->SVM event configuration")?,
+            EventType::TvmTvm => {
+                tracing::info!("skipping TVM->TVM event configuration");
+            }
         };
 
         // Done
         Ok(())
     }
 
-    async fn add_eth_ton_event_configuration(
+    async fn add_evm_tvm_event_configuration(
         &self,
         state: &mut BridgeState,
         account: &UInt256,
@@ -1808,29 +1809,29 @@ impl Bridge {
     ) -> Result<()> {
         let flags = EventConfigurationBaseContract(contract)
             .get_flags()
-            .context("Failed to get ETH->TON event configuration flags")?;
+            .context("Failed to get EVM->TVM event configuration flags")?;
 
         // Get configuration details
-        let details = EthTonEventConfigurationContract(contract)
+        let details = EvmTvmEventConfigurationContract(contract)
             .get_details()
-            .context("Failed to get ETH->TON event configuration details")?;
+            .context("Failed to get EVM->TVM event configuration details")?;
 
         let ctx = flags
-            .map(|flags| EthToTonMappingContext::from(flags as u8))
+            .map(|flags| EvmToTvmMappingContext::from(flags as u8))
             .unwrap_or_default();
 
         // Verify and prepare abi
-        let event_abi = Arc::new(EthEventAbi::new(
+        let event_abi = Arc::new(EvmEventAbi::new(
             &details.basic_configuration.event_abi,
             ctx,
         )?);
         let topic_hash = event_abi.get_eth_topic_hash().to_fixed_bytes();
-        let eth_contract_address = details.network_configuration.event_emitter;
+        let evm_contract_address = details.network_configuration.event_emitter;
 
-        // Get suitable ETH subscriber for specified chain id
-        let eth_subscriber = self
+        // Get suitable EVM subscriber for specified chain id
+        let evm_subscriber = self
             .context
-            .eth_subscribers
+            .evm_subscribers
             .get_subscriber(details.network_configuration.chain_id)
             .ok_or(BridgeError::UnknownChainId)?;
 
@@ -1838,22 +1839,22 @@ impl Bridge {
         add_event_code_hash(
             &mut state.event_code_hashes,
             &details.basic_configuration.event_code,
-            EventType::EthTon,
+            EventType::EvmTvm,
         )?;
 
         // Add configuration entry
-        let observer = AccountObserver::new(&self.eth_ton_event_configurations_tx);
-        match state.eth_ton_event_configurations.entry(*account) {
+        let observer = AccountObserver::new(&self.evm_tvm_event_configurations_tx);
+        match state.evm_tvm_event_configurations.entry(*account) {
             hash_map::Entry::Vacant(entry) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
-                    ?details, "added new ETH->TON event configuration"
+                    ?details, "added new EVM->TVM event configuration"
                 );
 
-                self.total_active_eth_ton_event_configurations
+                self.total_active_evm_tvm_event_configurations
                     .fetch_add(1, Ordering::Release);
 
-                entry.insert(EthTonEventConfigurationState {
+                entry.insert(EvmTvmEventConfigurationState {
                     details,
                     event_abi,
                     mapping_context: ctx,
@@ -1863,18 +1864,18 @@ impl Bridge {
             hash_map::Entry::Occupied(_) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
-                    "ETH->TON event configuration already exists",
+                    "EVM->TVM event configuration already exists",
                 );
                 return Err(BridgeError::EventConfigurationAlreadyExists.into());
             }
         };
 
-        // Subscribe to ETH events
-        eth_subscriber.subscribe(eth_contract_address.into(), topic_hash, *account);
+        // Subscribe to EVM events
+        evm_subscriber.subscribe(evm_contract_address.into(), topic_hash, *account);
 
-        // Subscribe to TON events
+        // Subscribe to TVM events
         self.context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([*account], &observer)
             .await;
 
@@ -1882,7 +1883,7 @@ impl Bridge {
         Ok(())
     }
 
-    async fn add_ton_eth_event_configuration(
+    async fn add_tvm_evm_event_configuration(
         &self,
         state: &mut BridgeState,
         account: &UInt256,
@@ -1891,55 +1892,55 @@ impl Bridge {
         #[cfg(feature = "ton")]
         let flags = EventConfigurationBaseContract(contract)
             .get_flags()
-            .context("Failed to get TON->ETH event configuration flags")?;
+            .context("Failed to get TVM->EVM event configuration flags")?;
 
         // Get configuration details
-        let details = TonEthEventConfigurationContract(contract)
+        let details = TvmEvmEventConfigurationContract(contract)
             .get_details()
-            .context("Failed to get TON->ETH event configuration details")?;
+            .context("Failed to get TVM->EVM event configuration details")?;
 
         #[cfg(feature = "ton")]
         let ctx = flags
-            .map(|flags| eth_ton_abi_converter::TonToEthContext::from(flags as u8))
+            .map(|flags| TvmToEvmContext::from(flags as u8))
             .unwrap_or_default();
 
         // Check if configuration is expired
-        let current_timestamp = self.context.ton_subscriber.current_utime();
+        let current_timestamp = self.context.tvm_subscriber.current_utime();
         if details.is_expired(current_timestamp) {
             // Do nothing in that case
             tracing::warn!(
                 configuration = %DisplayAddr(account),
                 current_timestamp,
                 end_timestamp = details.network_configuration.end_timestamp,
-                "ignoring disabled TON->ETH event configuration",
+                "ignoring disabled TVM->EVM event configuration",
             );
             return Ok(());
         };
 
         // Verify and prepare abi
-        let event_abi = decode_ton_event_abi(&details.basic_configuration.event_abi)?;
+        let event_abi = decode_tvm_event_abi(&details.basic_configuration.event_abi)?;
 
         // Add unique event hash
         add_event_code_hash(
             &mut state.event_code_hashes,
             &details.basic_configuration.event_code,
-            EventType::TonEth,
+            EventType::TvmEvm,
         )?;
 
         // Add configuration entry
-        let observer = AccountObserver::new(&self.ton_eth_event_configurations_tx);
-        match state.ton_eth_event_configurations.entry(*account) {
+        let observer = AccountObserver::new(&self.tvm_evm_event_configurations_tx);
+        match state.tvm_evm_event_configurations.entry(*account) {
             hash_map::Entry::Vacant(entry) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
                     ?details,
-                    "added new TON->ETH event configuration"
+                    "added new TVM->EVM event configuration"
                 );
 
-                self.total_active_ton_eth_event_configurations
+                self.total_active_tvm_evm_event_configurations
                     .fetch_add(1, Ordering::Release);
 
-                entry.insert(TonEthEventConfigurationState {
+                entry.insert(TvmEvmEventConfigurationState {
                     details,
                     #[cfg(feature = "ton")]
                     context: ctx,
@@ -1950,15 +1951,15 @@ impl Bridge {
             hash_map::Entry::Occupied(_) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
-                    "TON->ETH event configuration already exists",
+                    "TVM->EVM event configuration already exists",
                 );
                 return Err(BridgeError::EventConfigurationAlreadyExists.into());
             }
         };
 
-        // Subscribe to TON events
+        // Subscribe to TVM events
         self.context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([*account], &observer)
             .await;
 
@@ -1966,62 +1967,62 @@ impl Bridge {
         Ok(())
     }
 
-    async fn add_sol_ton_event_configuration(
+    async fn add_svm_tvm_event_configuration(
         &self,
         state: &mut BridgeState,
         account: &UInt256,
         contract: &ExistingContract,
     ) -> Result<()> {
-        if self.context.sol_subscriber.is_none() {
+        if self.context.svm_subscriber.is_none() {
             tracing::info!(
                 configuration = %DisplayAddr(account),
-                "ignoring SOL->TON event configuration: Solana subscriber is disabled",
+                "ignoring SVM->TVM event configuration: SVM subscriber is disabled",
             );
             return Ok(());
         }
 
         // Get configuration details
-        let details = SolTonEventConfigurationContract(contract)
+        let details = SvmTvmEventConfigurationContract(contract)
             .get_details()
-            .context("Failed to get SOL->TON event configuration details")?;
+            .context("Failed to get SVM->TVM event configuration details")?;
 
         // Check if configuration is expired
-        let current_timestamp = self.context.ton_subscriber.current_utime();
+        let current_timestamp = self.context.tvm_subscriber.current_utime();
         if details.is_expired(current_timestamp as u64) {
             // Do nothing in that case
             tracing::warn!(
                 configuration = %DisplayAddr(account),
                 current_timestamp,
                 end_timestamp = details.network_configuration.end_timestamp,
-                "ignoring disabled SOL->TON event configuration",
+                "ignoring disabled SVM->TVM event configuration",
             );
             return Ok(());
         };
 
         // Verify and prepare abi
-        let event_abi = decode_ton_event_abi(&details.basic_configuration.event_abi)?;
+        let event_abi = decode_tvm_event_abi(&details.basic_configuration.event_abi)?;
 
         // Add unique event hash
         add_event_code_hash(
             &mut state.event_code_hashes,
             &details.basic_configuration.event_code,
-            EventType::SolTon,
+            EventType::SvmTvm,
         )?;
 
         // Add configuration entry
-        let observer = AccountObserver::new(&self.sol_ton_event_configurations_tx);
-        match state.sol_ton_event_configurations.entry(*account) {
+        let observer = AccountObserver::new(&self.svm_tvm_event_configurations_tx);
+        match state.svm_tvm_event_configurations.entry(*account) {
             hash_map::Entry::Vacant(entry) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
                     ?details,
-                    "added new SOl->TON event configuration",
+                    "added new SVM->TVM event configuration",
                 );
 
-                self.total_active_sol_ton_event_configurations
+                self.total_active_svm_tvm_event_configurations
                     .fetch_add(1, Ordering::Release);
 
-                entry.insert(SolTonEventConfigurationState {
+                entry.insert(SvmTvmEventConfigurationState {
                     details,
                     event_abi,
                     _observer: observer.clone(),
@@ -2030,15 +2031,15 @@ impl Bridge {
             hash_map::Entry::Occupied(_) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
-                    "SOl->TON event configuration already exists",
+                    "SVM->TVM event configuration already exists",
                 );
                 return Err(BridgeError::EventConfigurationAlreadyExists.into());
             }
         };
 
-        // Subscribe to TON events
+        // Subscribe to TVM events
         self.context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([*account], &observer)
             .await;
 
@@ -2046,68 +2047,68 @@ impl Bridge {
         Ok(())
     }
 
-    async fn add_ton_sol_event_configuration(
+    async fn add_tvm_svm_event_configuration(
         &self,
         state: &mut BridgeState,
         account: &UInt256,
         contract: &ExistingContract,
     ) -> Result<()> {
-        let sol_subscriber = match &self.context.sol_subscriber {
-            Some(sol_subscriber) => sol_subscriber,
+        let svm_subscriber = match &self.context.svm_subscriber {
+            Some(subscriber) => subscriber,
             None => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
-                    "ignoring TON->SOL event configuration: Solana subscriber is disabled",
+                    "ignoring TVM->SVM event configuration: SVM subscriber is disabled",
                 );
                 return Ok(());
             }
         };
 
         // Get configuration details
-        let details = TonSolEventConfigurationContract(contract)
+        let details = TvmSvmEventConfigurationContract(contract)
             .get_details()
-            .context("Failed to get TON->SOL event configuration details")?;
+            .context("Failed to get TVM->SVM event configuration details")?;
 
         // Check if configuration is expired
-        let current_timestamp = self.context.ton_subscriber.current_utime();
+        let current_timestamp = self.context.tvm_subscriber.current_utime();
         if details.is_expired(current_timestamp) {
             // Do nothing in that case
             tracing::warn!(
                 configuration = %DisplayAddr(account),
                 current_timestamp,
                 end_timestamp = details.network_configuration.end_timestamp,
-                "ignoring disabled TON->SOL event configuration",
+                "ignoring disabled TVM->SVM event configuration",
             );
             return Ok(());
         };
 
         // Verify and prepare abi
-        let event_abi = decode_ton_event_abi(&details.basic_configuration.event_abi)?;
+        let event_abi = decode_tvm_event_abi(&details.basic_configuration.event_abi)?;
 
         // Add unique event hash
         add_event_code_hash(
             &mut state.event_code_hashes,
             &details.basic_configuration.event_code,
-            EventType::TonSol,
+            EventType::TvmSvm,
         )?;
 
-        // Get solana program address to subscribe
+        // Get SVM program address to subscribe
         let program_pubkey = Pubkey::new_from_array(details.network_configuration.program.inner());
 
         // Add configuration entry
-        let observer = AccountObserver::new(&self.ton_sol_event_configurations_tx);
-        match state.ton_sol_event_configurations.entry(*account) {
+        let observer = AccountObserver::new(&self.tvm_svm_event_configurations_tx);
+        match state.tvm_svm_event_configurations.entry(*account) {
             hash_map::Entry::Vacant(entry) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
                     ?details,
-                    "added new TON->SOL event configuration",
+                    "added new TVM->SVM event configuration",
                 );
 
-                self.total_active_ton_sol_event_configurations
+                self.total_active_tvm_svm_event_configurations
                     .fetch_add(1, Ordering::Release);
 
-                entry.insert(TonSolEventConfigurationState {
+                entry.insert(TvmSvmEventConfigurationState {
                     details,
                     event_abi,
                     _observer: observer.clone(),
@@ -2116,18 +2117,18 @@ impl Bridge {
             hash_map::Entry::Occupied(_) => {
                 tracing::info!(
                     configuration = %DisplayAddr(account),
-                    "TON->SOL event configuration already exists"
+                    "TVM->SVM event configuration already exists"
                 );
                 return Err(BridgeError::EventConfigurationAlreadyExists.into());
             }
         };
 
-        // Subscribe to Solana programs
-        sol_subscriber.subscribe(program_pubkey);
+        // Subscribe to SVM programs
+        svm_subscriber.subscribe(program_pubkey);
 
-        // Subscribe to TON events
+        // Subscribe to TVM events
         self.context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([*account], &observer)
             .await;
 
@@ -2143,16 +2144,16 @@ impl Bridge {
             bridge: Arc<Bridge>,
             code_hash: UInt256,
             event_type: EventType,
-            unique_eth_ton_event_configurations: Arc<AccountsSet>,
-            unique_ton_eth_event_configurations: Arc<AccountsSet>,
-            unique_sol_ton_event_configurations: Arc<AccountsSet>,
-            unique_ton_sol_event_configurations: Arc<AccountsSet>,
+            unique_evm_tvm_event_configurations: Arc<AccountsSet>,
+            unique_tvm_evm_event_configurations: Arc<AccountsSet>,
+            unique_svm_tvm_event_configurations: Arc<AccountsSet>,
+            unique_tvm_svm_event_configurations: Arc<AccountsSet>,
         ) -> Result<()> {
-            let our_public_key = bridge.context.keystore.ton.public_key();
-            let has_sol_subscriber = bridge.context.sol_subscriber.is_some();
+            let our_public_key = bridge.context.keystore.tvm.public_key();
+            let has_svm_subscriber = bridge.context.svm_subscriber.is_some();
 
-            let ton_subscriber = &bridge.context.ton_subscriber;
-            let addresses = ton_subscriber
+            let tvm_subscriber = &bridge.context.tvm_subscriber;
+            let addresses = tvm_subscriber
                 .get_accounts_by_code_hash(code_hash)
                 .await
                 .context("Failed to get accounts by code hash")?;
@@ -2160,7 +2161,7 @@ impl Bridge {
             for address in addresses {
                 let hash = UInt256::from_be_bytes(&address.address().get_bytestring(0));
 
-                let contract = ton_subscriber
+                let contract = tvm_subscriber
                     .get_contract_state(&hash)
                     .await?
                     .ok_or(BridgeError::AccountNotFound(hash.to_hex_string()))?;
@@ -2183,94 +2184,94 @@ impl Bridge {
 
                 // Process event
                 match EventBaseContract(&contract)
-                    .process(our_public_key, event_type == EventType::TonEth)
+                    .process(our_public_key, event_type == EventType::TvmEvm)
                 {
                     Ok(EventAction::Nop | EventAction::Vote) => match event_type {
-                        EventType::EthTon => {
-                            let configuration = check_configuration!(EthTonEventContract);
+                        EventType::EvmTvm => {
+                            let configuration = check_configuration!(EvmTvmEventContract);
 
-                            if !unique_eth_ton_event_configurations.contains(&configuration) {
+                            if !unique_evm_tvm_event_configurations.contains(&configuration) {
                                 tracing::warn!(
                                     event = %DisplayAddr(hash),
                                     configuration = %DisplayAddr(configuration),
-                                    "ETH->TON event configuration not found"
+                                    "EVM->TVM event configuration not found"
                                 );
                                 continue;
                             }
 
                             if bridge
-                                .add_pending_event(hash, &bridge.eth_ton_events_state)
+                                .add_pending_event(hash, &bridge.evm_tvm_events_state)
                                 .await
                             {
                                 bridge.spawn_background_task(
-                                    "initial update ETH->TON event",
-                                    bridge.clone().update_eth_ton_event(hash),
+                                    "initial update EVM->TVM event",
+                                    bridge.clone().update_evm_tvm_event(hash),
                                 );
                             }
                         }
-                        EventType::TonEth => {
-                            let configuration = check_configuration!(TonEthEventContract);
+                        EventType::TvmEvm => {
+                            let configuration = check_configuration!(TvmEvmEventContract);
 
-                            if !unique_ton_eth_event_configurations.contains(&configuration) {
+                            if !unique_tvm_evm_event_configurations.contains(&configuration) {
                                 tracing::warn!(
                                     event = %DisplayAddr(hash),
                                     configuration = %DisplayAddr(configuration),
-                                    "TON->ETH event configuration not found",
+                                    "TVM->EVM event configuration not found",
                                 );
                                 continue;
                             }
 
                             if bridge
-                                .add_pending_event(hash, &bridge.ton_eth_events_state)
+                                .add_pending_event(hash, &bridge.tvm_evm_events_state)
                                 .await
                             {
                                 bridge.spawn_background_task(
-                                    "initial update TON->ETH event",
-                                    bridge.clone().update_ton_eth_event(hash),
+                                    "initial update TVM->EVM event",
+                                    bridge.clone().update_tvm_evm_event(hash),
                                 );
                             }
                         }
-                        EventType::SolTon if has_sol_subscriber => {
-                            let configuration = check_configuration!(SolTonEventContract);
+                        EventType::SvmTvm if has_svm_subscriber => {
+                            let configuration = check_configuration!(SvmTvmEventContract);
 
-                            if !unique_sol_ton_event_configurations.contains(&configuration) {
+                            if !unique_svm_tvm_event_configurations.contains(&configuration) {
                                 tracing::warn!(
                                     event = %DisplayAddr(hash),
                                     configuration = %DisplayAddr(configuration),
-                                    "SOL->TON event configuration not found",
+                                    "SVM->TVM event configuration not found",
                                 );
                                 continue;
                             }
 
                             if bridge
-                                .add_pending_event(hash, &bridge.sol_ton_events_state)
+                                .add_pending_event(hash, &bridge.svm_tvm_events_state)
                                 .await
                             {
                                 bridge.spawn_background_task(
-                                    "initial update SOL->TON event",
-                                    bridge.clone().update_sol_ton_event(hash),
+                                    "initial update SVM->TVM event",
+                                    bridge.clone().update_svm_tvm_event(hash),
                                 );
                             }
                         }
-                        EventType::TonSol if has_sol_subscriber => {
-                            let configuration = check_configuration!(TonSolEventContract);
+                        EventType::TvmSvm if has_svm_subscriber => {
+                            let configuration = check_configuration!(TvmSvmEventContract);
 
-                            if !unique_ton_sol_event_configurations.contains(&configuration) {
+                            if !unique_tvm_svm_event_configurations.contains(&configuration) {
                                 tracing::warn!(
                                     event = %DisplayAddr(hash),
                                     configuration = %DisplayAddr(configuration),
-                                    "TON->SOL event configuration not found",
+                                    "TVM->SVM event configuration not found",
                                 );
                                 continue;
                             }
 
                             if bridge
-                                .add_pending_event(hash, &bridge.ton_sol_events_state)
+                                .add_pending_event(hash, &bridge.tvm_svm_events_state)
                                 .await
                             {
                                 bridge.spawn_background_task(
-                                    "initial update TON->SOL event",
-                                    bridge.clone().update_ton_sol_event(hash),
+                                    "initial update TVM->SVM event",
+                                    bridge.clone().update_tvm_svm_event(hash),
                                 );
                             }
                         }
@@ -2297,16 +2298,16 @@ impl Bridge {
         let event_code_hashes = &state.event_code_hashes;
 
         // NOTE: configuration sets are explicitly constructed from state instead of
-        // just using [eth/ton]_event_counters. It is done on purpose to use the actual
+        // just using [evm/tvm/svm]_event_counters. It is done on purpose to use the actual
         // configurations. It is acceptable that event counters will not be relevant
-        let unique_eth_ton_event_configurations =
-            Arc::new(state.unique_eth_ton_event_configurations());
-        let unique_ton_eth_event_configurations =
-            Arc::new(state.unique_ton_eth_event_configurations());
-        let unique_sol_ton_event_configurations =
-            Arc::new(state.unique_sol_ton_event_configurations());
-        let unique_ton_sol_event_configurations =
-            Arc::new(state.unique_ton_sol_event_configurations());
+        let unique_evm_tvm_event_configurations =
+            Arc::new(state.unique_evm_tvm_event_configurations());
+        let unique_tvm_evm_event_configurations =
+            Arc::new(state.unique_tvm_evm_event_configurations());
+        let unique_svm_tvm_event_configurations =
+            Arc::new(state.unique_svm_tvm_event_configurations());
+        let unique_tvm_svm_event_configurations =
+            Arc::new(state.unique_tvm_svm_event_configurations());
 
         let start = std::time::Instant::now();
 
@@ -2321,14 +2322,14 @@ impl Bridge {
                 let bridge = self.clone();
                 let results_tx = results_tx.clone();
 
-                let unique_eth_ton_event_configurations =
-                    unique_eth_ton_event_configurations.clone();
-                let unique_ton_eth_event_configurations =
-                    unique_ton_eth_event_configurations.clone();
-                let unique_sol_ton_event_configurations =
-                    unique_sol_ton_event_configurations.clone();
-                let unique_ton_sol_event_configurations =
-                    unique_ton_sol_event_configurations.clone();
+                let unique_evm_tvm_event_configurations =
+                    unique_evm_tvm_event_configurations.clone();
+                let unique_tvm_evm_event_configurations =
+                    unique_tvm_evm_event_configurations.clone();
+                let unique_svm_tvm_event_configurations =
+                    unique_svm_tvm_event_configurations.clone();
+                let unique_tvm_svm_event_configurations =
+                    unique_tvm_svm_event_configurations.clone();
 
                 tokio::spawn(async move {
                     let start = std::time::Instant::now();
@@ -2336,10 +2337,10 @@ impl Bridge {
                         bridge,
                         code_hash,
                         event_type,
-                        unique_eth_ton_event_configurations,
-                        unique_ton_eth_event_configurations,
-                        unique_sol_ton_event_configurations,
-                        unique_ton_sol_event_configurations,
+                        unique_evm_tvm_event_configurations,
+                        unique_tvm_evm_event_configurations,
+                        unique_svm_tvm_event_configurations,
+                        unique_tvm_svm_event_configurations,
                     )
                     .await;
                     tracing::info!(
@@ -2381,45 +2382,45 @@ impl Bridge {
                     Some(bridge) => bridge,
                     None => return,
                 };
-                let ton_subscriber = &bridge.context.ton_subscriber;
+                let tvm_subscriber = &bridge.context.tvm_subscriber;
 
                 // Get current time from masterchain
-                let current_utime = ton_subscriber.current_utime();
+                let current_utime = tvm_subscriber.current_utime();
 
                 // Check expired configurations
-                let has_expired_ton_eth_configurations = {
+                let has_expired_tvm_evm_configurations = {
                     let state = bridge.state.read().await;
-                    state.has_expired_ton_eth_event_configurations(current_utime)
+                    state.has_expired_tvm_evm_event_configurations(current_utime)
                 };
 
-                let has_expired_ton_sol_configurations = {
+                let has_expired_tvm_svm_configurations = {
                     let state = bridge.state.read().await;
-                    state.has_expired_ton_sol_event_configurations(current_utime)
+                    state.has_expired_tvm_svm_event_configurations(current_utime)
                 };
 
-                let has_expired_sol_ton_configurations = {
+                let has_expired_svm_tvm_configurations = {
                     let state = bridge.state.read().await;
-                    state.has_expired_sol_ton_event_configurations(current_utime)
+                    state.has_expired_svm_tvm_event_configurations(current_utime)
                 };
 
                 // Do nothing if there are not expired configurations
-                if !has_expired_ton_eth_configurations
-                    && !has_expired_ton_sol_configurations
-                    && !has_expired_sol_ton_configurations
+                if !has_expired_tvm_evm_configurations
+                    && !has_expired_tvm_svm_configurations
+                    && !has_expired_svm_tvm_configurations
                 {
                     continue;
                 }
 
                 let mut state = bridge.state.write().await;
 
-                // Remove TON->ETH expired configurations
+                // Remove TVM->EVM expired configurations
                 let mut total_removed = 0;
-                state.ton_eth_event_configurations.retain(|account, state| {
+                state.tvm_evm_event_configurations.retain(|account, state| {
                     if state.details.is_expired(current_utime) {
                         tracing::warn!(
                             configuration = %DisplayAddr(account),
                             current_utime,
-                            "removing TON->ETH event configuration",
+                            "removing TVM->EVM event configuration",
                         );
                         total_removed += 1;
                         false
@@ -2428,17 +2429,17 @@ impl Bridge {
                     }
                 });
                 bridge
-                    .total_active_ton_eth_event_configurations
+                    .total_active_tvm_evm_event_configurations
                     .fetch_sub(total_removed, Ordering::Release);
 
-                // Remove TON->SOL expired configurations
+                // Remove TVM->SVM expired configurations
                 let mut total_removed = 0;
-                state.ton_sol_event_configurations.retain(|account, state| {
+                state.tvm_svm_event_configurations.retain(|account, state| {
                     if state.details.is_expired(current_utime) {
                         tracing::warn!(
                             configuration = %DisplayAddr(account),
                             current_utime,
-                            "removing TON->SOL event configuration",
+                            "removing TVM->SVM event configuration",
                         );
                         total_removed += 1;
                         false
@@ -2447,17 +2448,17 @@ impl Bridge {
                     }
                 });
                 bridge
-                    .total_active_ton_sol_event_configurations
+                    .total_active_tvm_svm_event_configurations
                     .fetch_sub(total_removed, Ordering::Release);
 
-                // Remove SOL->TON expired configurations
+                // Remove SVM->TVM expired configurations
                 let mut total_removed = 0;
-                state.sol_ton_event_configurations.retain(|account, state| {
+                state.svm_tvm_event_configurations.retain(|account, state| {
                     if state.details.is_expired(current_utime as u64) {
                         tracing::warn!(
                             configuration = %DisplayAddr(account),
                             current_utime,
-                            "removing SOL->TON event configuration",
+                            "removing SVM->TVM event configuration",
                         );
                         total_removed += 1;
                         false
@@ -2466,13 +2467,13 @@ impl Bridge {
                     }
                 });
                 bridge
-                    .total_active_sol_ton_event_configurations
+                    .total_active_svm_tvm_event_configurations
                     .fetch_sub(total_removed, Ordering::Release);
             }
         });
     }
 
-    /// Creates ETH event observer if it doesn't exist and subscribes it to transactions
+    /// Creates EVM event observer if it doesn't exist and subscribes it to transactions
     async fn add_pending_event<T>(&self, account: UInt256, state: &EventsState<T>) -> bool
     where
         T: std::fmt::Debug + ReadFromTransaction + 'static,
@@ -2486,7 +2487,7 @@ impl Bridge {
                 observer: observer.clone(),
             });
             self.context
-                .ton_subscriber
+                .tvm_subscriber
                 .add_transactions_subscription([account], &observer)
                 .await;
             true
@@ -2517,14 +2518,14 @@ impl Bridge {
 }
 
 pub struct BridgeMetrics {
-    pub pending_eth_ton_event_count: usize,
-    pub pending_ton_eth_event_count: usize,
-    pub pending_sol_ton_event_count: usize,
-    pub pending_ton_sol_event_count: usize,
-    pub total_active_eth_ton_event_configurations: usize,
-    pub total_active_ton_eth_event_configurations: usize,
-    pub total_active_sol_ton_event_configurations: usize,
-    pub total_active_ton_sol_event_configurations: usize,
+    pub pending_evm_tvm_event_count: usize,
+    pub pending_tvm_evm_event_count: usize,
+    pub pending_svm_tvm_event_count: usize,
+    pub pending_tvm_svm_event_count: usize,
+    pub total_active_evm_tvm_event_configurations: usize,
+    pub total_active_tvm_evm_event_configurations: usize,
+    pub total_active_svm_tvm_event_configurations: usize,
+    pub total_active_tvm_svm_event_configurations: usize,
 }
 
 struct EventsState<T> {
@@ -2573,38 +2574,38 @@ trait EventExt {
 }
 
 #[async_trait::async_trait]
-impl EventExt for EthTonEvent {
+impl EventExt for EvmTvmEvent {
     const REQUIRE_ALL_SIGNATURES: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
-        bridge.update_eth_ton_event(account).await
+        bridge.update_evm_tvm_event(account).await
     }
 }
 
 #[async_trait::async_trait]
-impl EventExt for TonEthEvent {
+impl EventExt for TvmEvmEvent {
     const REQUIRE_ALL_SIGNATURES: bool = true;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
-        bridge.update_ton_eth_event(account).await
+        bridge.update_tvm_evm_event(account).await
     }
 }
 
 #[async_trait::async_trait]
-impl EventExt for SolTonEvent {
+impl EventExt for SvmTvmEvent {
     const REQUIRE_ALL_SIGNATURES: bool = false;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
-        bridge.update_sol_ton_event(account).await
+        bridge.update_svm_tvm_event(account).await
     }
 }
 
 #[async_trait::async_trait]
-impl EventExt for TonSolEvent {
+impl EventExt for TvmSvmEvent {
     const REQUIRE_ALL_SIGNATURES: bool = true;
 
     async fn update_event(bridge: Arc<Bridge>, account: UInt256) -> Result<()> {
-        bridge.update_ton_sol_event(account).await
+        bridge.update_tvm_svm_event(account).await
     }
 }
 
@@ -2612,52 +2613,52 @@ impl EventExt for TonSolEvent {
 #[derive(Default)]
 struct BridgeState {
     connectors: ConnectorsMap,
-    eth_ton_event_configurations: EthTonEventConfigurationsMap,
-    ton_eth_event_configurations: TonEthEventConfigurationsMap,
-    sol_ton_event_configurations: SolTonEventConfigurationsMap,
-    ton_sol_event_configurations: TonSolEventConfigurationsMap,
+    evm_tvm_event_configurations: EvmTvmEventConfigurationsMap,
+    tvm_evm_event_configurations: TvmEvmEventConfigurationsMap,
+    svm_tvm_event_configurations: SvmTvmEventConfigurationsMap,
+    tvm_svm_event_configurations: TvmSvmEventConfigurationsMap,
 
     /// Unique event contracts code hashes.
     ///
     /// NOTE: only built on startup and then updated on each new configuration.
     /// Elements are not removed because it is not needed (the situation when one
-    /// contract code will be used for ETH and TON simultaneously)
+    /// contract code will be used for EVM and TVM simultaneously)
     event_code_hashes: EventCodeHashesMap,
 }
 
 impl BridgeState {
-    fn has_expired_ton_eth_event_configurations(&self, current_timestamp: u32) -> bool {
-        self.ton_eth_event_configurations
+    fn has_expired_tvm_evm_event_configurations(&self, current_timestamp: u32) -> bool {
+        self.tvm_evm_event_configurations
             .iter()
             .any(|(_, state)| state.details.is_expired(current_timestamp))
     }
 
-    fn has_expired_ton_sol_event_configurations(&self, current_timestamp: u32) -> bool {
-        self.ton_sol_event_configurations
+    fn has_expired_tvm_svm_event_configurations(&self, current_timestamp: u32) -> bool {
+        self.tvm_svm_event_configurations
             .iter()
             .any(|(_, state)| state.details.is_expired(current_timestamp))
     }
 
-    fn has_expired_sol_ton_event_configurations(&self, current_timestamp: u32) -> bool {
-        self.sol_ton_event_configurations
+    fn has_expired_svm_tvm_event_configurations(&self, current_timestamp: u32) -> bool {
+        self.svm_tvm_event_configurations
             .iter()
             .any(|(_, state)| state.details.is_expired(current_timestamp as u64))
     }
 
-    fn unique_eth_ton_event_configurations(&self) -> FxHashSet<UInt256> {
-        self.eth_ton_event_configurations.keys().copied().collect()
+    fn unique_evm_tvm_event_configurations(&self) -> FxHashSet<UInt256> {
+        self.evm_tvm_event_configurations.keys().copied().collect()
     }
 
-    fn unique_ton_eth_event_configurations(&self) -> FxHashSet<UInt256> {
-        self.ton_eth_event_configurations.keys().copied().collect()
+    fn unique_tvm_evm_event_configurations(&self) -> FxHashSet<UInt256> {
+        self.tvm_evm_event_configurations.keys().copied().collect()
     }
 
-    fn unique_sol_ton_event_configurations(&self) -> FxHashSet<UInt256> {
-        self.sol_ton_event_configurations.keys().copied().collect()
+    fn unique_svm_tvm_event_configurations(&self) -> FxHashSet<UInt256> {
+        self.svm_tvm_event_configurations.keys().copied().collect()
     }
 
-    fn unique_ton_sol_event_configurations(&self) -> FxHashSet<UInt256> {
-        self.ton_sol_event_configurations.keys().copied().collect()
+    fn unique_tvm_svm_event_configurations(&self) -> FxHashSet<UInt256> {
+        self.tvm_svm_event_configurations.keys().copied().collect()
     }
 }
 
@@ -2696,7 +2697,7 @@ impl EventBaseContract<'_> {
             {
                 EventAction::Vote
             }
-            // Special case for TON->ETH event which must collect as much signatures as possible
+            // Special case for TVM->EVM event which must collect as many signatures as possible
             EventStatus::Confirmed
                 if require_all_signatures
                     && self.0.account.storage.balance.grams.as_u128() > 0
@@ -2720,72 +2721,72 @@ enum EventAction {
     Vote,
 }
 
-/// ETH->TON event configuration data
+/// EVM->TVM event configuration data
 #[derive(Clone)]
-struct EthTonEventConfigurationState {
+struct EvmTvmEventConfigurationState {
     /// Configuration details
-    details: EthTonEventConfigurationDetails,
+    details: EvmTvmEventConfigurationDetails,
     /// Mapping context
-    mapping_context: EthToTonMappingContext,
+    mapping_context: EvmToTvmMappingContext,
     /// Parsed and mapped event ABI
-    event_abi: Arc<EthEventAbi>,
+    event_abi: Arc<EvmEventAbi>,
 
     /// Observer must live as long as configuration lives
-    _observer: Arc<AccountObserver<EthTonEventConfigurationEvent>>,
+    _observer: Arc<AccountObserver<EvmTvmEventConfigurationEvent>>,
 }
 
-/// TON->ETH event configuration data
+/// TVM->EVM event configuration data
 #[derive(Clone)]
-struct TonEthEventConfigurationState {
+struct TvmEvmEventConfigurationState {
     /// Configuration details
-    details: TonEthEventConfigurationDetails,
+    details: TvmEvmEventConfigurationDetails,
     /// Context
     #[cfg(feature = "ton")]
-    context: eth_ton_abi_converter::TonToEthContext,
+    context: TvmToEvmContext,
     /// Parsed `eventData` ABI
     event_abi: Vec<ton_abi::Param>,
 
     /// Observer must live as long as configuration lives
-    _observer: Arc<AccountObserver<TonEthEventConfigurationEvent>>,
+    _observer: Arc<AccountObserver<TvmEvmEventConfigurationEvent>>,
 }
 
-impl TonEthEventConfigurationDetails {
+impl TvmEvmEventConfigurationDetails {
     fn is_expired(&self, current_timestamp: u32) -> bool {
         (1..current_timestamp).contains(&self.network_configuration.end_timestamp)
     }
 }
 
-/// ETH->TON event configuration data
+/// EVM->TVM event configuration data
 #[derive(Clone)]
-struct SolTonEventConfigurationState {
+struct SvmTvmEventConfigurationState {
     /// Configuration details
-    details: SolTonEventConfigurationDetails,
+    details: SvmTvmEventConfigurationDetails,
     /// Parsed and mapped event ABI
     event_abi: Vec<ton_abi::Param>,
 
     /// Observer must live as long as configuration lives
-    _observer: Arc<AccountObserver<SolTonEventConfigurationEvent>>,
+    _observer: Arc<AccountObserver<SvmTvmEventConfigurationEvent>>,
 }
 
-impl SolTonEventConfigurationDetails {
+impl SvmTvmEventConfigurationDetails {
     fn is_expired(&self, current_timestamp: u64) -> bool {
         (1..current_timestamp).contains(&self.network_configuration.end_timestamp)
     }
 }
 
-/// TON->SOL event configuration data
+/// TVM->SVM event configuration data
 #[derive(Clone)]
-struct TonSolEventConfigurationState {
+struct TvmSvmEventConfigurationState {
     /// Configuration details
-    details: TonSolEventConfigurationDetails,
+    details: TvmSvmEventConfigurationDetails,
     /// Parsed `eventData` ABI
     event_abi: Vec<ton_abi::Param>,
 
     /// Observer must live as long as configuration lives
-    _observer: Arc<AccountObserver<TonSolEventConfigurationEvent>>,
+    _observer: Arc<AccountObserver<TvmSvmEventConfigurationEvent>>,
 }
 
-impl TonSolEventConfigurationDetails {
+impl TvmSvmEventConfigurationDetails {
     fn is_expired(&self, current_timestamp: u32) -> bool {
         (1..current_timestamp).contains(&self.network_configuration.end_timestamp)
     }
@@ -2867,16 +2868,16 @@ impl TxContext<'_> {
 }
 
 #[derive(Debug, Clone)]
-enum TonEthEventConfigurationEvent {
+enum TvmEvmEventConfigurationEvent {
     EventDeployed { address: UInt256 },
     SetEndTimestamp { end_timestamp: u32 },
 }
 
-impl ReadFromTransaction for TonEthEventConfigurationEvent {
+impl ReadFromTransaction for TvmEvmEventConfigurationEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         let in_msg_body = ctx.in_msg_internal()?.body()?;
 
-        let set_end_timestamp = ton_eth_event_configuration_contract::set_end_timestamp();
+        let set_end_timestamp = tvm_evm_event_configuration_contract::set_end_timestamp();
 
         match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
@@ -2898,16 +2899,16 @@ impl ReadFromTransaction for TonEthEventConfigurationEvent {
 }
 
 #[derive(Debug, Clone)]
-enum EthTonEventConfigurationEvent {
+enum EvmTvmEventConfigurationEvent {
     EventsDeployed { events: Vec<UInt256> },
     SetEndBlockNumber { end_block_number: u32 },
 }
 
-impl ReadFromTransaction for EthTonEventConfigurationEvent {
+impl ReadFromTransaction for EvmTvmEventConfigurationEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         let in_msg_body = ctx.in_msg_internal()?.body()?;
 
-        let set_end_block_number = eth_ton_event_configuration_contract::set_end_block_number();
+        let set_end_block_number = evm_tvm_event_configuration_contract::set_end_block_number();
 
         match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_block_number.input_id => {
@@ -2930,18 +2931,18 @@ impl ReadFromTransaction for EthTonEventConfigurationEvent {
 }
 
 #[derive(Debug, Clone)]
-enum TonSolEventConfigurationEvent {
+enum TvmSvmEventConfigurationEvent {
     EventDeployed { address: UInt256 },
     SetEndTimestamp { end_timestamp: u32 },
 }
 
-impl ReadFromTransaction for TonSolEventConfigurationEvent {
+impl ReadFromTransaction for TvmSvmEventConfigurationEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         let in_msg_body = ctx.in_msg_internal()?.body()?;
 
-        let set_end_timestamp = ton_sol_event_configuration_contract::set_end_timestamp();
+        let set_end_timestamp = tvm_svm_event_configuration_contract::set_end_timestamp();
 
-        match nekoton_abi::read_function_id(&in_msg_body).ok()? {
+        match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
                 let end_timestamp = set_end_timestamp
                     .decode_input(in_msg_body, true)
@@ -2961,18 +2962,18 @@ impl ReadFromTransaction for TonSolEventConfigurationEvent {
 }
 
 #[derive(Debug, Clone)]
-enum SolTonEventConfigurationEvent {
+enum SvmTvmEventConfigurationEvent {
     EventsDeployed { events: Vec<UInt256> },
     SetEndTimestamp { end_timestamp: u64 },
 }
 
-impl ReadFromTransaction for SolTonEventConfigurationEvent {
+impl ReadFromTransaction for SvmTvmEventConfigurationEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         let in_msg_body = ctx.in_msg_internal()?.body()?;
 
-        let set_end_timestamp = sol_ton_event_configuration_contract::set_end_timestamp();
+        let set_end_timestamp = svm_tvm_event_configuration_contract::set_end_timestamp();
 
-        match nekoton_abi::read_function_id(&in_msg_body).ok()? {
+        match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
                 let end_timestamp = set_end_timestamp
                     .decode_input(in_msg_body, true)
@@ -2999,14 +3000,14 @@ impl ReadFromTransaction for EventStatus {
 }
 
 #[derive(Debug, Clone)]
-enum EthTonEvent {
+enum EvmTvmEvent {
     ReceiveRoundRelays { keys: Vec<UInt256> },
     Confirm { public_key: UInt256 },
     Reject { public_key: UInt256 },
     Rejected,
 }
 
-impl ReadFromTransaction for EthTonEvent {
+impl ReadFromTransaction for EvmTvmEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         if has_rejected_event(ctx) {
             return Some(Self::Rejected);
@@ -3018,11 +3019,11 @@ impl ReadFromTransaction for EthTonEvent {
                 let (public_key, body) = read_external_in_msg(&in_msg.body()?)?;
 
                 match read_function_id(&body) {
-                    Ok(id) if id == eth_ton_event_contract::confirm().input_id => {
-                        Some(EthTonEvent::Confirm { public_key })
+                    Ok(id) if id == evm_tvm_event_contract::confirm().input_id => {
+                        Some(EvmTvmEvent::Confirm { public_key })
                     }
-                    Ok(id) if id == eth_ton_event_contract::reject().input_id => {
-                        Some(EthTonEvent::Reject { public_key })
+                    Ok(id) if id == evm_tvm_event_contract::reject().input_id => {
+                        Some(EvmTvmEvent::Reject { public_key })
                     }
                     _ => None,
                 }
@@ -3037,7 +3038,7 @@ impl ReadFromTransaction for EthTonEvent {
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
-                        Some(EthTonEvent::ReceiveRoundRelays { keys: items })
+                        Some(EvmTvmEvent::ReceiveRoundRelays { keys: items })
                     }
                     _ => None,
                 }
@@ -3048,7 +3049,7 @@ impl ReadFromTransaction for EthTonEvent {
 }
 
 #[derive(Debug, Clone)]
-enum TonEthEvent {
+enum TvmEvmEvent {
     ReceiveRoundRelays { keys: Vec<UInt256> },
     Confirm { public_key: UInt256 },
     Reject { public_key: UInt256 },
@@ -3056,7 +3057,7 @@ enum TonEthEvent {
     Closed,
 }
 
-impl ReadFromTransaction for TonEthEvent {
+impl ReadFromTransaction for TvmEvmEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         if has_rejected_event(ctx) {
             return Some(Self::Rejected);
@@ -3068,11 +3069,11 @@ impl ReadFromTransaction for TonEthEvent {
                 let (public_key, body) = read_external_in_msg(&in_msg.body()?)?;
 
                 match read_function_id(&body) {
-                    Ok(id) if id == ton_eth_event_contract::confirm().input_id => {
-                        Some(TonEthEvent::Confirm { public_key })
+                    Ok(id) if id == tvm_evm_event_contract::confirm().input_id => {
+                        Some(TvmEvmEvent::Confirm { public_key })
                     }
-                    Ok(id) if id == ton_eth_event_contract::reject().input_id => {
-                        Some(TonEthEvent::Reject { public_key })
+                    Ok(id) if id == tvm_evm_event_contract::reject().input_id => {
+                        Some(TvmEvmEvent::Reject { public_key })
                     }
                     _ => None,
                 }
@@ -3087,7 +3088,7 @@ impl ReadFromTransaction for TonEthEvent {
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
-                        Some(TonEthEvent::ReceiveRoundRelays { keys: items })
+                        Some(TvmEvmEvent::ReceiveRoundRelays { keys: items })
                     }
                     _ => None,
                 }
@@ -3107,14 +3108,14 @@ impl ReadFromTransaction for TonEthEvent {
 }
 
 #[derive(Debug, Clone)]
-enum SolTonEvent {
+enum SvmTvmEvent {
     ReceiveRoundRelays { keys: Vec<UInt256> },
     Confirm { public_key: UInt256 },
     Reject { public_key: UInt256 },
     Rejected,
 }
 
-impl ReadFromTransaction for SolTonEvent {
+impl ReadFromTransaction for SvmTvmEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         if has_rejected_event(ctx) {
             return Some(Self::Rejected);
@@ -3126,11 +3127,11 @@ impl ReadFromTransaction for SolTonEvent {
                 let (public_key, body) = read_external_in_msg(&in_msg.body()?)?;
 
                 match read_function_id(&body) {
-                    Ok(id) if id == sol_ton_event_contract::confirm().input_id => {
-                        Some(SolTonEvent::Confirm { public_key })
+                    Ok(id) if id == svm_tvm_event_contract::confirm().input_id => {
+                        Some(SvmTvmEvent::Confirm { public_key })
                     }
-                    Ok(id) if id == sol_ton_event_contract::reject().input_id => {
-                        Some(SolTonEvent::Reject { public_key })
+                    Ok(id) if id == svm_tvm_event_contract::reject().input_id => {
+                        Some(SvmTvmEvent::Reject { public_key })
                     }
                     _ => None,
                 }
@@ -3145,7 +3146,7 @@ impl ReadFromTransaction for SolTonEvent {
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
-                        Some(SolTonEvent::ReceiveRoundRelays { keys: items })
+                        Some(SvmTvmEvent::ReceiveRoundRelays { keys: items })
                     }
                     _ => None,
                 }
@@ -3156,7 +3157,7 @@ impl ReadFromTransaction for SolTonEvent {
 }
 
 #[derive(Debug, Clone)]
-enum TonSolEvent {
+enum TvmSvmEvent {
     ReceiveRoundRelays { keys: Vec<UInt256> },
     Confirm { public_key: UInt256 },
     Reject { public_key: UInt256 },
@@ -3164,7 +3165,7 @@ enum TonSolEvent {
     Closed,
 }
 
-impl ReadFromTransaction for TonSolEvent {
+impl ReadFromTransaction for TvmSvmEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         if has_rejected_event(ctx) {
             return Some(Self::Rejected);
@@ -3176,11 +3177,11 @@ impl ReadFromTransaction for TonSolEvent {
                 let (public_key, body) = read_external_in_msg(&in_msg.body()?)?;
 
                 match read_function_id(&body) {
-                    Ok(id) if id == ton_sol_event_contract::confirm().input_id => {
-                        Some(TonSolEvent::Confirm { public_key })
+                    Ok(id) if id == tvm_svm_event_contract::confirm().input_id => {
+                        Some(TvmSvmEvent::Confirm { public_key })
                     }
-                    Ok(id) if id == ton_sol_event_contract::reject().input_id => {
-                        Some(TonSolEvent::Reject { public_key })
+                    Ok(id) if id == tvm_svm_event_contract::reject().input_id => {
+                        Some(TvmSvmEvent::Reject { public_key })
                     }
                     _ => None,
                 }
@@ -3195,7 +3196,7 @@ impl ReadFromTransaction for TonSolEvent {
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
-                        Some(TonSolEvent::ReceiveRoundRelays { keys: items })
+                        Some(TvmSvmEvent::ReceiveRoundRelays { keys: items })
                     }
                     _ => None,
                 }
@@ -3255,7 +3256,7 @@ fn parse_client_error(err: ClientError) -> anyhow::Error {
                 SolanaBridgeError::InvalidRelay => {
                     anyhow::Error::msg(SolanaBridgeError::InvalidRelay.to_string())
                 }
-                _ => anyhow::Error::msg(format!("Solana RPC error: {err}")),
+                _ => anyhow::Error::msg(format!("SVM RPC error: {err}")),
             }
         }
         ClientErrorKind::TransactionError(TransactionError::InstructionError(
@@ -3288,10 +3289,10 @@ type ConnectorState = Arc<AccountObserver<ConnectorEvent>>;
 type DefaultHeaders = (PubkeyHeader, TimeHeader, ExpireHeader);
 
 type ConnectorsMap = FxHashMap<UInt256, ConnectorState>;
-type EthTonEventConfigurationsMap = FxHashMap<UInt256, EthTonEventConfigurationState>;
-type TonEthEventConfigurationsMap = FxHashMap<UInt256, TonEthEventConfigurationState>;
-type SolTonEventConfigurationsMap = FxHashMap<UInt256, SolTonEventConfigurationState>;
-type TonSolEventConfigurationsMap = FxHashMap<UInt256, TonSolEventConfigurationState>;
+type EvmTvmEventConfigurationsMap = FxHashMap<UInt256, EvmTvmEventConfigurationState>;
+type TvmEvmEventConfigurationsMap = FxHashMap<UInt256, TvmEvmEventConfigurationState>;
+type SvmTvmEventConfigurationsMap = FxHashMap<UInt256, SvmTvmEventConfigurationState>;
+type TvmSvmEventConfigurationsMap = FxHashMap<UInt256, TvmSvmEventConfigurationState>;
 type EventCodeHashesMap = FxHashMap<UInt256, EventType>;
 
 #[derive(Debug, Clone, Hash)]

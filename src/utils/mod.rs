@@ -4,7 +4,7 @@ use std::hash::BuildHasherDefault;
 use dashmap::DashMap;
 use rustc_hash::FxHasher;
 
-pub use self::eth_address::*;
+pub use self::evm_address::*;
 pub use self::existing_contract::*;
 pub use self::memory_cache::*;
 pub use self::pending_messages_queue::*;
@@ -14,7 +14,7 @@ pub use self::shard_utils::*;
 pub use self::tristate::*;
 pub use self::tx_context::*;
 
-mod eth_address;
+mod evm_address;
 mod existing_contract;
 mod memory_cache;
 mod pending_messages_queue;
@@ -23,6 +23,8 @@ mod serde_helpers;
 mod shard_utils;
 mod tristate;
 mod tx_context;
+
+pub const LATEST_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_3;
 
 #[macro_export]
 macro_rules! once {

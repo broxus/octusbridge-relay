@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::*;
 
-/// Solana network settings
+/// SVM network settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SolConfig {
+pub struct SvmConfig {
     /// RPC endpoints
     pub endpoints: Vec<String>,
 

@@ -7,7 +7,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use dashmap::DashMap;
 use either::Either;
-use eth_ton_abi_converter::*;
 use futures_util::StreamExt;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tokio::sync::{oneshot, Notify, Semaphore};
@@ -20,25 +19,30 @@ use web3::{transports::Http, Transport};
 use self::models::*;
 use crate::config::*;
 use crate::engine::bridge::*;
-use crate::engine::ton_contracts::*;
+use crate::engine::tvm_contracts::*;
 use crate::utils::*;
 
 mod contracts;
 mod models;
 
+type EvmAddress = ethabi::Address;
+type EvmApi = web3::api::Eth<Http>;
+type EvmEventAbi = evm_tvm_abi_converter::EthEventAbi;
+type LastBlockNumbersMap = FxDashMap<u32, u64>;
+
 /// A collection of EVM chain subscribers
-pub struct EthSubscriberRegistry {
+pub struct EvmSubscriberRegistry {
     /// EVM subscribers by chain id
-    subscribers: DashMap<u32, Arc<EthSubscriber>>,
+    subscribers: DashMap<u32, Arc<EvmSubscriber>>,
     /// Shared last block numbers
     last_block_numbers: Arc<LastBlockNumbersMap>,
 }
 
-impl EthSubscriberRegistry {
+impl EvmSubscriberRegistry {
     /// Creates registry from configs
     pub async fn new<I>(networks: I) -> Result<Arc<Self>>
     where
-        I: IntoIterator<Item = EthConfig>,
+        I: IntoIterator<Item = EvmConfig>,
     {
         let registry = Arc::new(Self {
             subscribers: Default::default(),
@@ -60,12 +64,12 @@ impl EthSubscriberRegistry {
         }
     }
 
-    pub fn get_subscriber(&self, chain_id: u32) -> Option<Arc<EthSubscriber>> {
+    pub fn get_subscriber(&self, chain_id: u32) -> Option<Arc<EvmSubscriber>> {
         // Not cloning will deadlock
         self.subscribers.get(&chain_id).map(|x| x.clone())
     }
 
-    pub fn subscribers(&self) -> &DashMap<u32, Arc<EthSubscriber>> {
+    pub fn subscribers(&self) -> &DashMap<u32, Arc<EvmSubscriber>> {
         &self.subscribers
     }
 
@@ -73,18 +77,18 @@ impl EthSubscriberRegistry {
         self.last_block_numbers
             .get(&chain_id)
             .map(|item| *item)
-            .ok_or_else(|| EthSubscriberError::UnknownChainId.into())
+            .ok_or_else(|| EvmSubscriberError::UnknownChainId.into())
     }
 
-    pub fn get_last_block_numbers(&self) -> &Arc<FxDashMap<u32, u64>> {
+    pub fn get_last_block_numbers(&self) -> &Arc<LastBlockNumbersMap> {
         &self.last_block_numbers
     }
 
-    async fn new_subscriber(&self, config: EthConfig) -> Result<()> {
+    async fn new_subscriber(&self, config: EvmConfig) -> Result<()> {
         use dashmap::mapref::entry::Entry;
 
         let chain_id = config.chain_id;
-        let subscriber = EthSubscriber::new(self.last_block_numbers.clone(), config)
+        let subscriber = EvmSubscriber::new(self.last_block_numbers.clone(), config)
             .await
             .with_context(|| format!("Failed to create EVM subscriber for chain id: {chain_id}"))?;
 
@@ -93,7 +97,7 @@ impl EthSubscriberRegistry {
                 entry.insert(subscriber);
             }
             Entry::Occupied(entry) => {
-                tracing::warn!(chain_id, "replacing existing ETH subscriber");
+                tracing::warn!(chain_id, "replacing existing EVM subscriber");
                 entry.replace_entry(subscriber);
             }
         };
@@ -102,11 +106,11 @@ impl EthSubscriberRegistry {
     }
 }
 
-pub struct EthSubscriber {
+pub struct EvmSubscriber {
     chain_id: u32,
     chain_id_str: String,
-    config: EthConfig,
-    api: EthApi,
+    config: EvmConfig,
+    api: EvmApi,
     pool: Arc<Semaphore>,
     topics: parking_lot::RwLock<TopicsMap>,
     last_processed_block: Arc<AtomicU64>,
@@ -116,14 +120,14 @@ pub struct EthSubscriber {
     new_events_notify: Notify,
 }
 
-impl EthSubscriber {
+impl EvmSubscriber {
     async fn new(
         last_block_numbers: Arc<LastBlockNumbersMap>,
-        config: EthConfig,
+        config: EvmConfig,
     ) -> Result<Arc<Self>> {
         let chain_id = config.chain_id;
         let transport = web3::transports::Http::new(config.endpoint.as_str())?;
-        let api = web3::api::Eth::new(transport);
+        let api = EvmApi::new(transport);
         let pool = Arc::new(Semaphore::new(config.pool_size));
 
         let subscriber = Arc::new(Self {
@@ -155,8 +159,8 @@ impl EthSubscriber {
         &self.chain_id_str
     }
 
-    pub fn metrics(&self) -> EthSubscriberMetrics {
-        EthSubscriberMetrics {
+    pub fn metrics(&self) -> EvmSubscriberMetrics {
+        EvmSubscriberMetrics {
             last_processed_block: self.last_processed_block.load(Ordering::Acquire),
             pending_confirmation_count: self.pending_confirmation_count.load(Ordering::Acquire),
         }
@@ -167,9 +171,9 @@ impl EthSubscriber {
         &self,
         settings: &AddressVerificationConfig,
         secret_key: &secp256k1::SecretKey,
-        relay_address: &ethabi::Address,
+        relay_address: &EvmAddress,
         staker_address: UInt256,
-        verifier_address: &ethabi::Address,
+        verifier_address: &EvmAddress,
     ) -> Result<()> {
         const GWEI: u64 = 1000000000;
 
@@ -205,7 +209,7 @@ impl EthSubscriber {
                             state.transaction_hash.into(),
                         ))
                         .await
-                        .context("Failed to find ETH address verification transaction")?
+                        .context("Failed to find EVM address verification transaction")?
                     {
                         // Check if found transaction was included in block
                         Some(transaction) => match transaction.block_hash {
@@ -214,7 +218,7 @@ impl EthSubscriber {
                                 tracing::info!(
                                     tx = transaction_id,
                                     block = hex::encode(block.as_bytes()),
-                                    "ETH transaction found",
+                                    "EVM transaction found",
                                 );
                                 clear_state();
                                 return Ok(());
@@ -223,7 +227,7 @@ impl EthSubscriber {
                             None => {
                                 tracing::info!(
                                     tx = transaction_id,
-                                    "ETH transaction is still pending",
+                                    "EVM transaction is still pending",
                                 );
                                 tokio::time::sleep(Duration::from_secs(10)).await;
                             }
@@ -306,14 +310,14 @@ impl EthSubscriber {
         self.api
             .send_raw_transaction(signed.raw_transaction)
             .await
-            .context("Failed to send raw ETH transaction")?;
+            .context("Failed to send raw EVM transaction")?;
 
         Ok(())
     }
 
     pub fn subscribe(
         &self,
-        address: ethabi::Address,
+        address: EvmAddress,
         topic_hash: [u8; 32],
         configuration_account: UInt256,
     ) {
@@ -324,7 +328,7 @@ impl EthSubscriber {
 
     pub fn unsubscribe<I>(&self, subscriptions: I)
     where
-        I: IntoIterator<Item = (ethabi::Address, [u8; 32], UInt256)>,
+        I: IntoIterator<Item = (EvmAddress, [u8; 32], UInt256)>,
     {
         self.topics.write().remove_entries(subscriptions)
     }
@@ -335,9 +339,9 @@ impl EthSubscriber {
 
     pub async fn verify(
         &self,
-        vote_data: EthTonEventVoteData,
+        vote_data: EvmTvmEventVoteData,
         event_emitter: [u8; 20],
-        event_abi: Arc<EthEventAbi>,
+        event_abi: Arc<EvmEventAbi>,
         blocks_to_confirm: u16,
         preliminary_checks_succeeded: bool,
     ) -> Result<VerificationStatus> {
@@ -423,12 +427,12 @@ impl EthSubscriber {
             Duration::from_secs(self.config.maximum_failed_responses_time_sec),
         );
 
-        // Get latest ETH block
+        // Get latest EVM block
         let mut current_block = match retry(
             || self.get_current_block_number(),
             api_request_strategy,
-            NetworkType::EVM(self.chain_id),
-            "get actual ethereum height",
+            NetworkType::EVM(chain_id),
+            "get actual EVM chain height",
         )
         .await
         {
@@ -507,7 +511,7 @@ impl EthSubscriber {
         for event in events {
             if let Some(confirmation) = pending_confirmations.get_mut(&event.event_id()) {
                 match event {
-                    ParsedEthEvent::Removed(event) => {
+                    ParsedEvmEvent::Removed(event) => {
                         tracing::info!(
                             chain_id,
                             tx = hex::encode(event.transaction_hash.0),
@@ -518,7 +522,7 @@ impl EthSubscriber {
                             reason: "Log removed".to_owned(),
                         })
                     }
-                    ParsedEthEvent::Received(event) => {
+                    ParsedEvmEvent::Received(event) => {
                         tracing::info!(
                             chain_id,
                             tx = hex::encode(event.transaction_hash.0),
@@ -568,15 +572,15 @@ impl EthSubscriber {
         });
 
         let events_to_check = events_to_check
-            .collect::<Vec<(EventId, Result<Option<ParsedEthEvent>>)>>()
+            .collect::<Vec<(EventId, Result<Option<ParsedEvmEvent>>)>>()
             .await;
         tracing::info!(chain_id, current_block, ?events_to_check);
 
         for (event_id, result) in events_to_check {
             if let hash_map::Entry::Occupied(mut entry) = pending_confirmations.entry(event_id) {
                 let status = match result {
-                    Ok(Some(ParsedEthEvent::Received(event))) => entry.get_mut().check(event),
-                    Ok(Some(ParsedEthEvent::Removed(_))) => VerificationStatus::NotExists {
+                    Ok(Some(ParsedEvmEvent::Received(event))) => entry.get_mut().check(event),
+                    Ok(Some(ParsedEvmEvent::Removed(_))) => VerificationStatus::NotExists {
                         reason: "Log removed".to_owned(),
                     },
                     Ok(None) => VerificationStatus::NotExists {
@@ -620,7 +624,7 @@ impl EthSubscriber {
         &self,
         from: u64,
         to: u64,
-    ) -> Result<impl Iterator<Item = ParsedEthEvent>> {
+    ) -> Result<impl Iterator<Item = ParsedEvmEvent>> {
         let filter = match self.topics.read().make_filter(from, to) {
             Some(filter) => filter,
             None => return Ok(Either::Left(std::iter::empty())),
@@ -641,7 +645,7 @@ impl EthSubscriber {
                 "get contract logs",
             )
             .await
-            .context("Failed getting eth logs")?
+            .context("Failed getting EVM chain logs")?
         };
 
         Ok(Either::Right(parse_transaction_logs(logs)))
@@ -650,7 +654,7 @@ impl EthSubscriber {
     async fn find_event(
         &self,
         (transaction_hash, event_index): &EventId,
-    ) -> Result<Option<ParsedEthEvent>> {
+    ) -> Result<Option<ParsedEvmEvent>> {
         let receipt = {
             let _permission = self.pool.acquire().await;
 
@@ -685,7 +689,7 @@ impl EthSubscriber {
     }
 
     #[cfg(not(feature = "disable-staking"))]
-    async fn get_balance(&self, address: ethabi::Address) -> Result<web3::types::U256> {
+    async fn get_balance(&self, address: EvmAddress) -> Result<web3::types::U256> {
         Ok(self.api.balance(address, None).await?)
     }
 
@@ -701,7 +705,7 @@ impl EthSubscriber {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct EthSubscriberMetrics {
+pub struct EvmSubscriberMetrics {
     pub last_processed_block: u64,
     pub pending_confirmation_count: usize,
 }
@@ -709,7 +713,7 @@ pub struct EthSubscriberMetrics {
 #[derive(Default)]
 struct TopicsMap {
     entries: FxHashSet<TopicsMapEntry>,
-    unique_addresses: Vec<ethabi::Address>,
+    unique_addresses: Vec<EvmAddress>,
     unique_topics: Vec<H256>,
 }
 
@@ -730,7 +734,7 @@ impl TopicsMap {
 
     fn add_entry(
         &mut self,
-        address: ethabi::Address,
+        address: EvmAddress,
         topic_hash: [u8; 32],
         configuration_account: UInt256,
     ) {
@@ -745,7 +749,7 @@ impl TopicsMap {
 
     fn remove_entries<I>(&mut self, entries: I)
     where
-        I: IntoIterator<Item = (ethabi::Address, [u8; 32], UInt256)>,
+        I: IntoIterator<Item = (EvmAddress, [u8; 32], UInt256)>,
     {
         let mut should_update = false;
 
@@ -781,29 +785,26 @@ impl TopicsMap {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 struct TopicsMapEntry {
-    address: ethabi::Address,
+    address: EvmAddress,
     topic_hash: [u8; 32],
     configuration_account: UInt256,
 }
 
-type EthApi = web3::api::Eth<Http>;
-type LastBlockNumbersMap = FxDashMap<u32, u64>;
-
 struct PendingConfirmation {
-    vote_data: EthTonEventVoteData,
+    vote_data: EvmTvmEventVoteData,
     status_tx: Option<VerificationStatusTx>,
     event_emitter: [u8; 20],
-    event_abi: Arc<EthEventAbi>,
+    event_abi: Arc<EvmEventAbi>,
     target_block: u64,
     status: Option<VerificationStatus>,
 }
 
 impl PendingConfirmation {
-    fn check(&self, event: ReceivedEthEvent) -> VerificationStatus {
+    fn check(&self, event: ReceivedEvmEvent) -> VerificationStatus {
         let vote_data = &self.vote_data;
 
         // NOTE: event_index and transaction_hash are already checked while searching
-        // ETH event log, but here they are also checked just in case.
+        // EVM event log, but here they are also checked just in case.
         let result = if event.address.0 != self.event_emitter {
             Err(format!(
                 "Event emitter address mismatch. From event: {:x}. Expected: {}",
@@ -865,9 +866,9 @@ type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
 
 fn parse_transaction_logs(
     logs: Vec<web3::types::Log>,
-) -> impl Iterator<Item = ParsedEthEvent> + DoubleEndedIterator {
+) -> impl Iterator<Item = ParsedEvmEvent> + DoubleEndedIterator {
     logs.into_iter()
-        .map(ParsedEthEvent::try_from)
+        .map(ParsedEvmEvent::try_from)
         .filter_map(|event| match event {
             Ok(event) => Some(event),
             Err(e) => {
@@ -884,7 +885,7 @@ fn is_incomplete_message(error: &anyhow::Error) -> bool {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum EthSubscriberError {
+enum EvmSubscriberError {
     #[error("Unknown chain id")]
     UnknownChainId,
 }

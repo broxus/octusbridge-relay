@@ -7,12 +7,12 @@ use web3::types::{Log, H160, H256};
 pub type EventId = (H256, u32);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ParsedEthEvent {
-    Removed(RemovedEthEvent),
-    Received(ReceivedEthEvent),
+pub enum ParsedEvmEvent {
+    Removed(RemovedEvmEvent),
+    Received(ReceivedEvmEvent),
 }
 
-impl ParsedEthEvent {
+impl ParsedEvmEvent {
     pub fn event_id(&self) -> EventId {
         match self {
             Self::Removed(event) => (event.transaction_hash, event.event_index),
@@ -35,7 +35,7 @@ impl ParsedEthEvent {
     }
 }
 
-impl TryFrom<Log> for ParsedEthEvent {
+impl TryFrom<Log> for ParsedEvmEvent {
     type Error = anyhow::Error;
 
     fn try_from(log: Log) -> Result<Self, Self::Error> {
@@ -51,7 +51,7 @@ impl TryFrom<Log> for ParsedEthEvent {
             .context("Event index was not found in event")?;
 
         if let Some(true) = log.removed {
-            return Ok(ParsedEthEvent::Removed(RemovedEthEvent {
+            return Ok(ParsedEvmEvent::Removed(RemovedEvmEvent {
                 address,
                 transaction_hash,
                 event_index,
@@ -82,7 +82,7 @@ impl TryFrom<Log> for ParsedEthEvent {
             "received logs",
         );
 
-        Ok(ParsedEthEvent::Received(ReceivedEthEvent {
+        Ok(ParsedEvmEvent::Received(ReceivedEvmEvent {
             address,
             topic_hash,
             transaction_hash,
@@ -95,7 +95,7 @@ impl TryFrom<Log> for ParsedEthEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemovedEthEvent {
+pub struct RemovedEvmEvent {
     pub address: H160,
     pub transaction_hash: H256,
     pub event_index: u32,
@@ -103,7 +103,7 @@ pub struct RemovedEthEvent {
 
 /// Topics: `Keccak256("Method_Signature")`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReceivedEthEvent {
+pub struct ReceivedEvmEvent {
     pub address: H160,
     pub topic_hash: H256,
     pub transaction_hash: H256,

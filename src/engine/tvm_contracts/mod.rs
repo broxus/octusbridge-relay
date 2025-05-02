@@ -13,20 +13,20 @@ pub mod bridge_contract;
 pub mod connector_contract;
 #[cfg(not(feature = "disable-staking"))]
 pub mod elections_contract;
-pub mod eth_ton_event_configuration_contract;
-pub mod eth_ton_event_contract;
+pub mod evm_tvm_event_configuration_contract;
+pub mod evm_tvm_event_contract;
 #[cfg(not(feature = "disable-staking"))]
 pub mod relay_round_contract;
-pub mod sol_ton_event_configuration_contract;
-pub mod sol_ton_event_contract;
 #[cfg(not(feature = "disable-staking"))]
 pub mod staking_contract;
+pub mod svm_tvm_event_configuration_contract;
+pub mod svm_tvm_event_contract;
 #[cfg(not(feature = "ton"))]
 pub mod token_root_contract;
-pub mod ton_eth_event_configuration_contract;
-pub mod ton_eth_event_contract;
-pub mod ton_sol_event_configuration_contract;
-pub mod ton_sol_event_contract;
+pub mod tvm_evm_event_configuration_contract;
+pub mod tvm_evm_event_contract;
+pub mod tvm_svm_event_configuration_contract;
+pub mod tvm_svm_event_contract;
 #[cfg(not(feature = "disable-staking"))]
 pub mod user_data_contract;
 
@@ -36,9 +36,9 @@ mod models;
 mod tests;
 
 #[cfg(not(feature = "ton"))]
-const TON_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_2;
+const CONFIGURABLE_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_2;
 #[cfg(feature = "ton")]
-const TON_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_3;
+const CONFIGURABLE_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_3;
 
 pub struct EventBaseContract<'a>(pub &'a ExistingContract);
 
@@ -76,11 +76,11 @@ impl EventBaseContract<'_> {
     }
 }
 
-pub struct EthTonEventContract<'a>(pub &'a ExistingContract);
+pub struct EvmTvmEventContract<'a>(pub &'a ExistingContract);
 
-impl EthTonEventContract<'_> {
-    pub fn event_init_data(&self) -> Result<EthTonEventInitData> {
-        let function = eth_ton_event_contract::get_event_init_data();
+impl EvmTvmEventContract<'_> {
+    pub fn event_init_data(&self) -> Result<EvmTvmEventInitData> {
+        let function = evm_tvm_event_contract::get_event_init_data();
         let event_init_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -88,8 +88,8 @@ impl EthTonEventContract<'_> {
         Ok(event_init_data)
     }
 
-    pub fn event_decoded_data(&self) -> Result<EthTonEventDecodedData> {
-        let function = eth_ton_event_contract::get_decoded_data();
+    pub fn event_decoded_data(&self) -> Result<EvmTvmEventDecodedData> {
+        let function = evm_tvm_event_contract::get_decoded_data();
         let event_decoded_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -98,11 +98,11 @@ impl EthTonEventContract<'_> {
     }
 }
 
-pub struct TonEthEventContract<'a>(pub &'a ExistingContract);
+pub struct TvmEvmEventContract<'a>(pub &'a ExistingContract);
 
-impl TonEthEventContract<'_> {
-    pub fn event_init_data(&self) -> Result<TonEthEventInitData> {
-        let function = ton_eth_event_contract::get_event_init_data();
+impl TvmEvmEventContract<'_> {
+    pub fn event_init_data(&self) -> Result<TvmEvmEventInitData> {
+        let function = tvm_evm_event_contract::get_event_init_data();
         let event_init_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -111,8 +111,8 @@ impl TonEthEventContract<'_> {
     }
 
     #[cfg(feature = "ton")]
-    pub fn event_decoded_data(&self) -> Result<TonEthEventDecodedData> {
-        let function = ton_eth_event_contract::get_decoded_data();
+    pub fn event_decoded_data(&self) -> Result<TvmEvmEventDecodedData> {
+        let function = tvm_evm_event_contract::get_decoded_data();
         let event_decoded_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -121,11 +121,11 @@ impl TonEthEventContract<'_> {
     }
 }
 
-pub struct SolTonEventContract<'a>(pub &'a ExistingContract);
+pub struct SvmTvmEventContract<'a>(pub &'a ExistingContract);
 
-impl SolTonEventContract<'_> {
-    pub fn event_init_data(&self) -> Result<SolTonEventInitData> {
-        let function = sol_ton_event_contract::get_event_init_data();
+impl SvmTvmEventContract<'_> {
+    pub fn event_init_data(&self) -> Result<SvmTvmEventInitData> {
+        let function = svm_tvm_event_contract::get_event_init_data();
         let event_init_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -134,11 +134,11 @@ impl SolTonEventContract<'_> {
     }
 }
 
-pub struct TonSolEventContract<'a>(pub &'a ExistingContract);
+pub struct TvmSvmEventContract<'a>(pub &'a ExistingContract);
 
-impl TonSolEventContract<'_> {
-    pub fn event_init_data(&self) -> Result<TonSolEventInitData> {
-        let function = ton_sol_event_contract::get_event_init_data();
+impl TvmSvmEventContract<'_> {
+    pub fn event_init_data(&self) -> Result<TvmSvmEventInitData> {
+        let function = tvm_svm_event_contract::get_event_init_data();
         let event_init_data = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -176,11 +176,11 @@ impl EventConfigurationBaseContract<'_> {
     }
 }
 
-pub struct EthTonEventConfigurationContract<'a>(pub &'a ExistingContract);
+pub struct EvmTvmEventConfigurationContract<'a>(pub &'a ExistingContract);
 
-impl EthTonEventConfigurationContract<'_> {
-    pub fn get_details(&self) -> Result<EthTonEventConfigurationDetails> {
-        let function = eth_ton_event_configuration_contract::get_details();
+impl EvmTvmEventConfigurationContract<'_> {
+    pub fn get_details(&self) -> Result<EvmTvmEventConfigurationDetails> {
+        let function = evm_tvm_event_configuration_contract::get_details();
         let details = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -189,11 +189,11 @@ impl EthTonEventConfigurationContract<'_> {
     }
 }
 
-pub struct TonEthEventConfigurationContract<'a>(pub &'a ExistingContract);
+pub struct TvmEvmEventConfigurationContract<'a>(pub &'a ExistingContract);
 
-impl TonEthEventConfigurationContract<'_> {
-    pub fn get_details(&self) -> Result<TonEthEventConfigurationDetails> {
-        let function = ton_eth_event_configuration_contract::get_details();
+impl TvmEvmEventConfigurationContract<'_> {
+    pub fn get_details(&self) -> Result<TvmEvmEventConfigurationDetails> {
+        let function = tvm_evm_event_configuration_contract::get_details();
         let details = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -202,11 +202,11 @@ impl TonEthEventConfigurationContract<'_> {
     }
 }
 
-pub struct SolTonEventConfigurationContract<'a>(pub &'a ExistingContract);
+pub struct SvmTvmEventConfigurationContract<'a>(pub &'a ExistingContract);
 
-impl SolTonEventConfigurationContract<'_> {
-    pub fn get_details(&self) -> Result<SolTonEventConfigurationDetails> {
-        let function = sol_ton_event_configuration_contract::get_details();
+impl SvmTvmEventConfigurationContract<'_> {
+    pub fn get_details(&self) -> Result<SvmTvmEventConfigurationDetails> {
+        let function = svm_tvm_event_configuration_contract::get_details();
         let details = self
             .0
             .run_local_responsible(function, &[answer_id()])?
@@ -215,11 +215,11 @@ impl SolTonEventConfigurationContract<'_> {
     }
 }
 
-pub struct TonSolEventConfigurationContract<'a>(pub &'a ExistingContract);
+pub struct TvmSvmEventConfigurationContract<'a>(pub &'a ExistingContract);
 
-impl TonSolEventConfigurationContract<'_> {
-    pub fn get_details(&self) -> Result<TonSolEventConfigurationDetails> {
-        let function = ton_sol_event_configuration_contract::get_details();
+impl TvmSvmEventConfigurationContract<'_> {
+    pub fn get_details(&self) -> Result<TvmSvmEventConfigurationDetails> {
+        let function = tvm_svm_event_configuration_contract::get_details();
         let details = self
             .0
             .run_local_responsible(function, &[answer_id()])?

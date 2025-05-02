@@ -4,7 +4,6 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use anyhow::Result;
-use everscale_rpc_client::RpcClient;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use nekoton_utils::TrustMe;
@@ -12,13 +11,14 @@ use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use ton_block::{GetRepresentationHash, MsgAddressInt};
 use ton_types::UInt256;
+use tvm_rpc_client::RpcClient;
 
 use crate::utils::*;
 
 const POLLING_INTERVAL_SECS: u64 = 3;
 const POOL_SIZE: usize = 15;
 
-pub struct TonSubscriber {
+pub struct TvmSubscriber {
     current_utime: AtomicU32,
     signature_id: SignatureId,
     account_subscriptions: Mutex<FxHashMap<UInt256, AccountSubscription>>,
@@ -28,7 +28,7 @@ pub struct TonSubscriber {
     rpc_client: RpcClient,
 }
 
-impl TonSubscriber {
+impl TvmSubscriber {
     pub fn new(messages_queue: Arc<PendingMessagesQueue>, rpc_client: RpcClient) -> Arc<Self> {
         Arc::new(Self {
             current_utime: Default::default(),
@@ -56,10 +56,10 @@ impl TonSubscriber {
         self: &Arc<Self>,
         blockchain_config: &ton_executor::BlockchainConfig,
     ) -> Result<()> {
-        tracing::info!("starting ton subscriber");
+        tracing::info!("starting TVM subscriber");
         self.update_signature_id(blockchain_config)?;
         self.update_current_utime();
-        tracing::info!("ton subscriber started");
+        tracing::info!("TVM subscriber started");
 
         Ok(())
     }
@@ -584,12 +584,12 @@ enum TonSubscriberError {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::ton_subscriber::{SignatureId, TonSubscriber};
+    use crate::engine::tvm_subscriber::{SignatureId, TvmSubscriber};
     use crate::utils::{only_account_hash, PendingMessagesQueue};
-    use everscale_rpc_client::RpcClient;
     use nekoton_utils::TrustMe;
     use std::str::FromStr;
     use ton_block::MsgAddressInt;
+    use tvm_rpc_client::RpcClient;
     use url::Url;
 
     #[test]
@@ -613,11 +613,11 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn transactions_playground() {
-        let rpc_url = Url::from_str("https://jrpc.everwallet.net/proto").trust_me();
+        let rpc_url = Url::parse("https://jrpc-ton.broxus.com").unwrap();
         let rpc_client = RpcClient::new(vec![rpc_url], Default::default())
             .await
             .trust_me();
-        let ton_subscriber = TonSubscriber::new(PendingMessagesQueue::new(0), rpc_client);
+        let tvm_subscriber = TvmSubscriber::new(PendingMessagesQueue::new(0), rpc_client);
 
         let account = MsgAddressInt::from_str(
             "0:a519f99bb5d6d51ef958ed24d337ad75a1c770885dcd42d51d6663f9fcdacfb2",
@@ -625,7 +625,7 @@ mod tests {
         .trust_me();
         let account = only_account_hash(account);
         let latest_lt = 54948624000006;
-        let txs = ton_subscriber
+        let txs = tvm_subscriber
             .get_transactions(&account, latest_lt + 1)
             .await
             .trust_me();

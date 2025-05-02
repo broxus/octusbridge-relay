@@ -69,7 +69,7 @@ NOTE: scripts are prepared and tested on **Ubuntu 20.04**. You may need to modif
 
 4. ##### Link relay keys
 
-   Use ETH address and Everscale public key from the previous step to link this relay setup
+   Use EVM address and TVM public key from the previous step to link this relay setup
    with your staker address at https://octusbridge.io/relayers/create. When you start the linking process go to step 5 and start the relay. It will begin to confirm the public key and address on the air.
    It may take some time to sync at first (~40 minutes).
 
@@ -101,30 +101,30 @@ NOTE: scripts are prepared and tested on **Ubuntu 20.04**. You may need to modif
    > <p>
    >
    > ```
-   > eth_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="56"} 13790361
-   > eth_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="56"} 0
-   > eth_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="137"} 22954791
-   > eth_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="137"} 0
-   > eth_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="250"} 26020394
-   > eth_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="250"} 0
-   > eth_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="1"} 13875962
-   > eth_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="1"} 0
-   > sol_subscriber_unrecognized_proposals_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
-   > ton_subscriber_ready{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1
-   > ton_subscriber_current_utime{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1640456699
-   > ton_subscriber_time_diff{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 3
-   > ton_subscriber_shard_client_time_diff{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 7
-   > ton_subscriber_mc_block_seqno{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 13426600
-   > ton_subscriber_shard_client_mc_block_seqno{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 13426600
-   > ton_subscriber_pending_message_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
-   > bridge_pending_eth_ton_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
-   > bridge_pending_ton_eth_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
-   > bridge_pending_sol_ton_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
-   > bridge_pending_ton_sol_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
-   > bridge_total_active_eth_ton_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 86
-   > bridge_total_active_ton_eth_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 11
-   > bridge_total_active_sol_ton_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1
-   > bridge_total_active_ton_sol_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1
+   > evm_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="56"} 13790361
+   > evm_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="56"} 0
+   > evm_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="137"} 22954791
+   > evm_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="137"} 0
+   > evm_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="250"} 26020394
+   > evm_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="250"} 0
+   > evm_subscriber_last_processed_block{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="1"} 13875962
+   > evm_subscriber_pending_confirmation_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",chain_id="1"} 0
+   > svm_subscriber_unrecognized_proposals_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
+   > tvm_subscriber_ready{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1
+   > tvm_subscriber_current_utime{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1640456699
+   > tvm_subscriber_time_diff{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 3
+   > tvm_subscriber_shard_client_time_diff{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 7
+   > tvm_subscriber_mc_block_seqno{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 13426600
+   > tvm_subscriber_shard_client_mc_block_seqno{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 13426600
+   > tvm_subscriber_pending_message_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
+   > bridge_pending_evm_tvm_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
+   > bridge_pending_tvm_evm_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
+   > bridge_pending_svm_tvm_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
+   > bridge_pending_tvm_svm_event_count{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 0
+   > bridge_total_active_evm_tvm_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 86
+   > bridge_total_active_tvm_evm_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 11
+   > bridge_total_active_svm_tvm_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1
+   > bridge_total_active_tvm_svm_event_configurations{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 1
    > staking_user_data_tokens_balance{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",round_num="13"} 100000000000000
    > staking_current_relay_round{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246"} 13
    > staking_elections_start_time{staker="0:7a9701bede7f86bf039aba200c1bb421a388bbb4b0580bfaeafa66f908d2b246",round_num="13"} 1640380268
@@ -240,21 +240,21 @@ metrics_settings:
 
 ### Architecture overview
 
-The relay is simultaneously the Everscale node and can communicate with all EVM networks specified in the config.
+The relay is simultaneously the TVM node and can communicate with all EVM networks specified in the config.
 Its purpose is to check and sign transaction events.
 
-At startup, it synchronizes the Everscale node and downloads blockchain state. It searches Bridge contract state in it,
-all connectors, active configurations and pending events. Then it subscribes to the Bridge contract in Everscale and
+At startup, it synchronizes the TVM node and downloads blockchain state. It searches Bridge contract state in it,
+all connectors, active configurations and pending events. Then it subscribes to the Bridge contract in TVM and
 listens for connector deployment events. Each new connector can produce activation event which signals that relay
 should subscribe to the event configuration contract. Each configuration contract produces event deployment
 events, relay sees and checks them.
 
-- For Everscale-to-EVM events, only the correctness of data packing is checked (all other stuff is verified on the contracts
+- For TVM-to-EVM events, only the correctness of data packing is checked (all other stuff is verified on the contracts
   side). You can enforce token metadata check though (currently for TON only, use flag `0x01` on contract level to enable). If the event is correct, the relay converts this data into ETH ABI encoded bytes and signs it with its
   ETH key. This signature is sent along with a confirmation message. If the data in the event was invalid then the
   relay sends a rejection message.
 
-  ##### Everscale-to-EVM ABI mapping rules:
+  ##### TVM-to-EVM ABI mapping rules:
 
   ```
   bytes => same
@@ -269,11 +269,11 @@ events, relay sees and checks them.
   _ => unsupported
   ```
 
-- For EVM-to-Everscale events, all event parameters are checked on the relay side. It waits for or looking for a transaction
+- For EVM-to-TVM events, all event parameters are checked on the relay side. It waits for or looking for a transaction
   on the specified EVM network, converts event data to the TVM cell and sends a confirmation message if everything was
   correct. Otherwise, it sends a rejection message.
 
-  ##### ETH-to-Everscale ABI mapping rules:
+  ##### EVM-to-TVM ABI mapping rules:
 
   > You can use https://github.com/broxus/eth-ton-abi-converter to convert data from web page
 
@@ -292,7 +292,7 @@ events, relay sees and checks them.
   _ => unsupported
   ```
 
-  > When converting ABI from EVM format to Everscale, there is a mechanism for controlling this process.
+  > When converting ABI from EVM format to TVM, there is a mechanism for controlling this process.
   > You can add a `bytes1` _(\*\*)_ element which sets context flags to its value.
   >
   > Currently, there are only four flags:
@@ -304,7 +304,7 @@ events, relay sees and checks them.
   >
   > NOTE: Flags can't be changed inside an array element! This would lead to inconsistent array items ABI.
 
-The decision to make the relay an Everscale node was not made by chance. In the first version, several relays were connected
+The decision to make the relay an TVM node was not made by chance. In the first version, several relays were connected
 to the one "light" node which was constantly restarted or to the graphql which also was quite unreliable.
 As a result, relays instantly see all events and vote for them almost simultaneously in one block. The implementation is
 more optimized than C++ node, so they don't harm the network.

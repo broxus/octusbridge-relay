@@ -10,8 +10,8 @@ use tokio::sync::Notify;
 use ton_types::UInt256;
 
 use crate::engine::keystore::*;
-use crate::engine::ton_contracts::*;
-use crate::engine::ton_subscriber::*;
+use crate::engine::tvm_contracts::*;
+use crate::engine::tvm_subscriber::*;
 use crate::engine::EngineContext;
 use crate::utils::*;
 
@@ -61,7 +61,7 @@ impl Staking {
         let (relay_round_details, relay_round_state, user_data_account) = loop {
             // Get all info from staking contract
             let staking_contract = ctx
-                .ton_subscriber
+                .tvm_subscriber
                 .get_contract_state(&staking_account)
                 .await?
                 .context("Staking contract not found")?;
@@ -77,7 +77,7 @@ impl Staking {
 
             // Get all info from current relay round contract
             let relay_round_details = match ctx
-                .ton_subscriber
+                .tvm_subscriber
                 .get_contract_state(&relay_round_address)
                 .await?
             {
@@ -105,11 +105,11 @@ impl Staking {
         };
 
         let participates_in_round = relay_round_details
-            .staker_addrs
+            .staker_addresses
             .contains(&ctx.staker_account);
 
         let user_data_contract = ctx
-            .ton_subscriber
+            .tvm_subscriber
             .get_contract_state(&user_data_account)
             .await?
             .context("User data account not found")?;
@@ -174,11 +174,11 @@ impl Staking {
         // Subscribe observers
         let context = &staking.context;
         context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([staking_account], &staking.staking_observer)
             .await;
         context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([user_data_account], &staking.user_data_observer)
             .await;
 
@@ -203,7 +203,7 @@ impl Staking {
         ctx: &EngineContext,
     ) -> Result<bool> {
         let elections_contract = ctx
-            .ton_subscriber
+            .tvm_subscriber
             .get_contract_state(elections_account_address)
             .await?
             .context("Next elections contract not found")?;
@@ -230,8 +230,8 @@ impl Staking {
     #[tracing::instrument(skip(self))]
     async fn collect_all_unclaimed_reward(self: &Arc<Self>) -> Result<()> {
         tracing::info!("searching for the staking account");
-        let ton_subscriber = &self.context.ton_subscriber;
-        let staking_contract = ton_subscriber
+        let tvm_subscriber = &self.context.tvm_subscriber;
+        let staking_contract = tvm_subscriber
             .get_contract_state(&self.staking_account)
             .await?
             .context("Staking contract not found")?;
@@ -264,7 +264,7 @@ impl Staking {
 
         let relay_round_contract = match self
             .context
-            .ton_subscriber
+            .tvm_subscriber
             .get_contract_state(&relay_round_address)
             .await
         {
@@ -403,8 +403,8 @@ impl Staking {
 
         match event {
             UserDataEvent::RelayKeysUpdated(event) => {
-                if event.ton_pubkey != keystore.ton.public_key()
-                    || &event.eth_address != keystore.eth.address().as_fixed_bytes()
+                if event.tvm_pubkey != keystore.tvm.public_key()
+                    || &event.evm_address != keystore.evm.address().as_fixed_bytes()
                 {
                     tracing::error!(
                         "FATAL ERROR. Staker sent different keys. Current relay setup is not operational now"
@@ -414,8 +414,8 @@ impl Staking {
             }
             UserDataEvent::RelayMembershipRequested(event) => {
                 tracing::info!(
-                    ton_pubkey = event.ton_pubkey.to_hex_string(),
-                    eth_address = hex::encode(event.eth_address),
+                    tvm_pubkey = event.tvm_pubkey.to_hex_string(),
+                    evm_address = hex::encode(event.evm_address),
                     "relay membership requested",
                 );
                 self.elected.store(Some(true));
@@ -686,8 +686,8 @@ impl Staking {
 
     /// Checks whether this relay is in current relay round
     async fn update_participates_in_round_status(&self) -> Result<()> {
-        let ton_subscriber = &self.context.ton_subscriber;
-        let staking_contract = ton_subscriber
+        let tvm_subscriber = &self.context.tvm_subscriber;
+        let staking_contract = tvm_subscriber
             .get_contract_state(&self.staking_account)
             .await?
             .context("Staking contract not found")?;
@@ -700,7 +700,7 @@ impl Staking {
         let relay_round_address = staking_contract
             .get_relay_round_address(relay_rounds_details.current_relay_round)
             .context("Failed to compute relay round address")?;
-        let relay_round_contract = ton_subscriber
+        let relay_round_contract = tvm_subscriber
             .get_contract_state(&relay_round_address)
             .await?
             .context("Current relay round contract not found")?;
@@ -710,7 +710,7 @@ impl Staking {
             relay_round_contract
                 .get_details()
                 .context("Failed to get relay round details")?
-                .staker_addrs
+                .staker_addresses
                 .contains(&self.staking_account),
         );
 
@@ -734,18 +734,18 @@ struct CurrentRelayRound {
 }
 
 impl EngineContext {
-    /// Ensures that TON pubkey and ETH address are confirmed in UserData
+    /// Ensures that TVM pubkey and EVM address are confirmed in UserData
     async fn ensure_user_data_confirmed(self: &Arc<Self>, staking_account: UInt256) -> Result<()> {
         let staking_contract = self
-            .ton_subscriber
+            .tvm_subscriber
             .get_contract_state(&staking_account)
             .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
 
-        // Get bridge ETH event configuration
+        // Get bridge EVM event configuration
         let bridge_event_configuration = staking_contract
-            .get_eth_bridge_configuration_details(&self.ton_subscriber)
+            .get_evm_bridge_configuration_details(&self.tvm_subscriber)
             .await?;
         tracing::info!(
             ?bridge_event_configuration,
@@ -756,7 +756,7 @@ impl EngineContext {
         let user_data_account = staking_contract.get_user_data_address(&self.staker_account)?;
         tracing::info!(account = %DisplayAddr(user_data_account), "found user data account");
         let user_data_contract = self
-            .ton_subscriber
+            .tvm_subscriber
             .get_contract_state(&user_data_account)
             .await?
             .context("User data account not found")?;
@@ -769,18 +769,18 @@ impl EngineContext {
 }
 
 impl UserDataContract<'_> {
-    /// Ensures that TON pubkey and ETH address are confirmed in UserData
+    /// Ensures that TVM pubkey and EVM address are confirmed in UserData
     async fn ensure_verified(
         &self,
         context: &Arc<EngineContext>,
         user_data_account: UInt256,
-        bridge_event_configuration: EthTonEventConfigurationDetails,
+        bridge_event_configuration: EvmTvmEventConfigurationDetails,
     ) -> Result<()> {
-        let ton_pubkey_confirmed_notify = Arc::new(Notify::new());
-        let eth_address_confirmed_notify = Arc::new(Notify::new());
+        let tvm_pubkey_confirmed_notify = Arc::new(Notify::new());
+        let evm_address_confirmed_notify = Arc::new(Notify::new());
 
-        let ton_notified = ton_pubkey_confirmed_notify.notified();
-        let eth_notified = eth_address_confirmed_notify.notified();
+        let tvm_notified = tvm_pubkey_confirmed_notify.notified();
+        let evm_notified = evm_address_confirmed_notify.notified();
 
         let (user_data_events_tx, mut user_data_events_rx) =
             mpsc::unbounded_channel::<(UInt256, UserDataEvent)>();
@@ -790,55 +790,55 @@ impl UserDataContract<'_> {
             .context("Failed to get UserData details")?;
         tracing::info!(user_data_details = ?details);
 
-        let relay_eth_address = *context.keystore.eth.address().as_fixed_bytes();
-        let relay_ton_pubkey = *context.keystore.ton.public_key();
+        let relay_evm_address = *context.keystore.evm.address().as_fixed_bytes();
+        let relay_tvm_pubkey = *context.keystore.tvm.public_key();
 
-        if details.relay_eth_address != relay_eth_address {
-            return Err(StakingError::UserDataEthAddressMismatch.into());
+        if details.relay_evm_address != relay_evm_address {
+            return Err(StakingError::UserDataEvmAddressMismatch.into());
         }
-        if details.relay_ton_pubkey != relay_ton_pubkey {
-            return Err(StakingError::UserDataTonPublicKeyMismatch.into());
+        if details.relay_tvm_pubkey != relay_tvm_pubkey {
+            return Err(StakingError::UserDataTvmPublicKeyMismatch.into());
         }
 
         let user_data_observer = AccountObserver::new(&user_data_events_tx);
 
         tokio::spawn({
-            let ton_pubkey_confirmed_notify = ton_pubkey_confirmed_notify.clone();
-            let eth_address_confirmed_notify = eth_address_confirmed_notify.clone();
+            let tvm_pubkey_confirmed_notify = tvm_pubkey_confirmed_notify.clone();
+            let evm_address_confirmed_notify = evm_address_confirmed_notify.clone();
 
             async move {
                 while let Some((_, event)) = user_data_events_rx.recv().await {
                     match event {
                         UserDataEvent::RelayKeysUpdated(event) => {
-                            if event.ton_pubkey != relay_ton_pubkey
-                                || event.eth_address != relay_eth_address
+                            if event.tvm_pubkey != relay_tvm_pubkey
+                                || event.evm_address != relay_evm_address
                             {
                                 tracing::error!(
-                                    "TON pubkey or ETH address changed. Relay in current setup may freeze"
+                                    "TVM pubkey or EVM address changed. Relay in current setup may freeze"
                                 );
                             }
                         }
-                        UserDataEvent::TonPubkeyConfirmed(event) => {
-                            if event.ton_pubkey == relay_ton_pubkey {
-                                tracing::info!("received TON pubkey confirmation");
-                                ton_pubkey_confirmed_notify.notify_waiters();
+                        UserDataEvent::TvmPubkeyConfirmed(event) => {
+                            if event.tvm_pubkey == relay_tvm_pubkey {
+                                tracing::info!("received TVM pubkey confirmation");
+                                tvm_pubkey_confirmed_notify.notify_waiters();
                             } else {
                                 tracing::error!(
-                                    relay_ton_pubkey = relay_ton_pubkey.to_hex_string(),
-                                    event_ton_pubkey = event.ton_pubkey.to_hex_string(),
-                                    "confirmed TON pubkey mismatch",
+                                    relay_ton_pubkey = relay_tvm_pubkey.to_hex_string(),
+                                    event_ton_pubkey = event.tvm_pubkey.to_hex_string(),
+                                    "confirmed TVM pubkey mismatch",
                                 );
                             }
                         }
-                        UserDataEvent::EthAddressConfirmed(event) => {
-                            if event.eth_addr == relay_eth_address {
-                                tracing::info!("received ETH address confirmation");
-                                eth_address_confirmed_notify.notify_waiters();
+                        UserDataEvent::EvmAddressConfirmed(event) => {
+                            if event.evm_address == relay_evm_address {
+                                tracing::info!("received EVM address confirmation");
+                                evm_address_confirmed_notify.notify_waiters();
                             } else {
                                 tracing::error!(
-                                    relay_eth_address = hex::encode(relay_eth_address),
-                                    event_eth_address = hex::encode(event.eth_addr),
-                                    "confirmed ETH address mismatch"
+                                    relay_evm_address = hex::encode(relay_evm_address),
+                                    event_evm_address = hex::encode(event.evm_address),
+                                    "confirmed EVM address mismatch"
                                 );
                             }
                         }
@@ -850,12 +850,12 @@ impl UserDataContract<'_> {
         });
 
         context
-            .ton_subscriber
+            .tvm_subscriber
             .add_transactions_subscription([user_data_account], &user_data_observer)
             .await;
 
-        if details.ton_pubkey_confirmed {
-            ton_pubkey_confirmed_notify.notify_waiters();
+        if details.tvm_pubkey_confirmed {
+            tvm_pubkey_confirmed_notify.notify_waiters();
         } else {
             context
                 .deliver_message(
@@ -868,22 +868,22 @@ impl UserDataContract<'_> {
                     || true,
                 )
                 .await
-                .context("Failed confirming TON public key")?;
-            tracing::info!("sent TON public key confirmation");
+                .context("Failed confirming TVM public key")?;
+            tracing::info!("sent TVM public key confirmation");
         }
 
-        if details.eth_address_confirmed {
-            eth_address_confirmed_notify.notify_waiters();
+        if details.evm_address_confirmed {
+            evm_address_confirmed_notify.notify_waiters();
         } else {
             let subscriber = context
-                .eth_subscribers
+                .evm_subscribers
                 .get_subscriber(bridge_event_configuration.network_configuration.chain_id)
-                .ok_or(StakingError::RequiredEthNetworkNotFound)?;
+                .ok_or(StakingError::RequiredEvmNetworkNotFound)?;
             subscriber
                 .verify_relay_staker_address(
                     &context.settings.address_verification,
-                    context.keystore.eth.secret_key(),
-                    context.keystore.eth.address(),
+                    context.keystore.evm.secret_key(),
+                    context.keystore.evm.address(),
                     context.staker_account,
                     &bridge_event_configuration
                         .network_configuration
@@ -891,34 +891,34 @@ impl UserDataContract<'_> {
                         .into(),
                 )
                 .await
-                .context("Failed confirming ETH address")?;
-            tracing::info!("sent ETH address confirmation")
+                .context("Failed confirming EVM address")?;
+            tracing::info!("sent EVM address confirmation")
         }
 
         tracing::info!("waiting for confirmation");
-        futures_util::future::join(ton_notified, eth_notified).await;
+        futures_util::future::join(tvm_notified, evm_notified).await;
 
         Ok(())
     }
 }
 
 impl<'a> StakingContract<'a> {
-    /// Find bridge ETH event configuration
-    async fn get_eth_bridge_configuration_details(
+    /// Find bridge EVM event configuration
+    async fn get_evm_bridge_configuration_details(
         &self,
-        ton_subscriber: &TonSubscriber,
-    ) -> Result<EthTonEventConfigurationDetails> {
+        tvm_subscriber: &TvmSubscriber,
+    ) -> Result<EvmTvmEventConfigurationDetails> {
         let details = self
             .get_details()
             .context("Failed to get staking details")?;
-        let configuration_contract = ton_subscriber
-            .get_contract_state(&details.bridge_event_config_eth_ton)
+        let configuration_contract = tvm_subscriber
+            .get_contract_state(&details.bridge_event_config_evm_tvm)
             .await?
-            .context("Bridge ETH event configuration not found")?;
+            .context("Bridge EVM->TVM event configuration not found")?;
 
-        EthTonEventConfigurationContract(&configuration_contract)
+        EvmTvmEventConfigurationContract(&configuration_contract)
             .get_details()
-            .context("Failed to get ETH bridge configuration details")
+            .context("Failed to get EVM->TVM bridge configuration details")
     }
 
     /// Collect relay round state
@@ -1055,8 +1055,8 @@ impl ReadFromTransaction for (RoundState, StakingEvent) {
 #[derive(Debug)]
 enum UserDataEvent {
     RelayKeysUpdated(RelayKeysUpdatedEvent),
-    TonPubkeyConfirmed(TonPubkeyConfirmedEvent),
-    EthAddressConfirmed(EthAddressConfirmedEvent),
+    TvmPubkeyConfirmed(TvmPubkeyConfirmedEvent),
+    EvmAddressConfirmed(EvmAddressConfirmedEvent),
     RelayMembershipRequested(RelayMembershipRequestedEvent),
     DepositProcessed(DepositProcessedEvent),
 }
@@ -1064,8 +1064,8 @@ enum UserDataEvent {
 impl ReadFromTransaction for UserDataEvent {
     fn read_from_transaction(ctx: &TxContext<'_>) -> Option<Self> {
         let keys_updated = user_data_contract::events::relay_keys_updated();
-        let ton_confirmed = user_data_contract::events::ton_pubkey_confirmed();
-        let eth_confirmed = user_data_contract::events::eth_address_confirmed();
+        let tvm_confirmed = user_data_contract::events::tvm_pubkey_confirmed();
+        let evm_confirmed = user_data_contract::events::evm_address_confirmed();
         let membership_requested = user_data_contract::events::relay_membership_requested();
         let deposit = user_data_contract::events::deposit_processed();
 
@@ -1073,10 +1073,10 @@ impl ReadFromTransaction for UserDataEvent {
         ctx.iterate_events(|id, body| {
             if id == keys_updated.id {
                 parse_tokens!(res, keys_updated, body, UserDataEvent::RelayKeysUpdated)
-            } else if id == ton_confirmed.id {
-                parse_tokens!(res, ton_confirmed, body, UserDataEvent::TonPubkeyConfirmed)
-            } else if id == eth_confirmed.id {
-                parse_tokens!(res, eth_confirmed, body, UserDataEvent::EthAddressConfirmed)
+            } else if id == tvm_confirmed.id {
+                parse_tokens!(res, tvm_confirmed, body, UserDataEvent::TvmPubkeyConfirmed)
+            } else if id == evm_confirmed.id {
+                parse_tokens!(res, evm_confirmed, body, UserDataEvent::EvmAddressConfirmed)
             } else if id == membership_requested.id {
                 parse_tokens!(
                     res,
@@ -1094,10 +1094,10 @@ impl ReadFromTransaction for UserDataEvent {
 
 #[derive(thiserror::Error, Debug)]
 enum StakingError {
-    #[error("Required ETH network not found")]
-    RequiredEthNetworkNotFound,
-    #[error("UserData ETH address mismatch")]
-    UserDataEthAddressMismatch,
-    #[error("UserData TON public key mismatch")]
-    UserDataTonPublicKeyMismatch,
+    #[error("Required EVM network not found")]
+    RequiredEvmNetworkNotFound,
+    #[error("UserData EVM address mismatch")]
+    UserDataEvmAddressMismatch,
+    #[error("UserData TVM public key mismatch")]
+    UserDataTvmPublicKeyMismatch,
 }

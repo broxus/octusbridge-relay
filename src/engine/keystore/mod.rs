@@ -9,14 +9,14 @@ use secstr::SecUtf8;
 use solana_sdk::signature::Signer;
 use ton_types::UInt256;
 
-use crate::config::{FromPhraseAndPath, StoredKeysData, UnencryptedEthData, UnencryptedTonData};
+use crate::config::{FromPhraseAndPath, StoredKeysData, UnencryptedEvmData, UnencryptedTvmData};
 use crate::utils::*;
 
 /// A collection of signers
 pub struct KeyStore {
-    pub eth: EthSigner,
-    pub ton: TonSigner,
-    pub sol: SolSigner,
+    pub evm: EvmSigner,
+    pub tvm: TvmSigner,
+    pub svm: SvmSigner,
 }
 
 impl KeyStore {
@@ -33,60 +33,60 @@ impl KeyStore {
             tracing::info!("generating new keys");
             let data = StoredKeysData::new(
                 password.unsecure(),
-                UnencryptedEthData::generate()?,
-                UnencryptedTonData::generate()?,
+                UnencryptedEvmData::generate()?,
+                UnencryptedTvmData::generate()?,
             )?;
 
-            // NOTE: UnencryptedEthData and UnencryptedTonData will be dropped and zeroed
+            // NOTE: UnencryptedEvmData and UnencryptedTvmData will be dropped and zeroed
             // here because they use `SecUtf8` for phrase and path
 
             data.save(keys_path)?;
             data
         };
 
-        let (eth_secret_key, ton_secret_key) =
+        let (evm_secret_key, tvm_secret_key) =
             stored_data.decrypt_only_keys(password.unsecure())?;
 
-        let eth_secret_key = secp256k1::SecretKey::from_slice(&eth_secret_key)?;
-        let ton_keypair = {
-            let secret = ed25519_dalek::SecretKey::from_bytes(&ton_secret_key)?;
+        let evm_secret_key = secp256k1::SecretKey::from_slice(&evm_secret_key)?;
+        let tvm_keypair = {
+            let secret = ed25519_dalek::SecretKey::from_bytes(&tvm_secret_key)?;
             let public = ed25519_dalek::PublicKey::from(&secret);
             ed25519_dalek::Keypair { secret, public }
         };
-        let sol_keypair = {
-            let secret = ed25519_dalek::SecretKey::from_bytes(&ton_secret_key)?;
+        let svm_keypair = {
+            let secret = ed25519_dalek::SecretKey::from_bytes(&tvm_secret_key)?;
             solana_sdk::signature::Keypair::from_bytes(secret.as_bytes())?
         };
 
         let keystore = Arc::new(Self {
-            eth: EthSigner::new(eth_secret_key),
-            ton: TonSigner::new(ton_keypair),
-            sol: SolSigner::new(sol_keypair),
+            evm: EvmSigner::new(evm_secret_key),
+            tvm: TvmSigner::new(tvm_keypair),
+            svm: SvmSigner::new(svm_keypair),
         });
 
-        // Print ETH address and TON public key
-        tracing::warn!("using TON public key: 0x{:x}", keystore.ton.public_key());
+        // Print EVM address and TVM public key
+        tracing::warn!("using TVM public key: 0x{:x}", keystore.tvm.public_key());
         tracing::warn!(
-            "using ETH address: {}",
-            EthAddressWrapper(keystore.eth.address())
+            "using EVM address: {}",
+            EvmAddressWrapper(keystore.evm.address())
         );
-        tracing::warn!("using SOL public key: {}", keystore.sol.public_key());
+        tracing::warn!("using SVM public key: {}", keystore.svm.public_key());
 
         Ok(keystore)
     }
 }
 
-pub struct EthSigner {
+pub struct EvmSigner {
     secp256k1: secp256k1::Secp256k1<secp256k1::All>,
     secret_key: secp256k1::SecretKey,
     address: ethabi::Address,
 }
 
-impl EthSigner {
+impl EvmSigner {
     fn new(secret_key: secp256k1::SecretKey) -> Self {
         let secp256k1 = secp256k1::Secp256k1::new();
         let public_key = secp256k1::PublicKey::from_secret_key(&secp256k1, &secret_key);
-        let address = compute_eth_address(&public_key);
+        let address = compute_evm_address(&public_key);
 
         Self {
             secp256k1,
@@ -99,11 +99,11 @@ impl EthSigner {
     pub fn sign(&self, data: &[u8]) -> [u8; 65] {
         // 1. Calculate prefixed hash
         let data_hash = web3::signing::keccak256(data);
-        let mut eth_data: Vec<u8> = "\x19Ethereum Signed Message:\n32".into();
-        eth_data.extend_from_slice(&data_hash);
+        let mut evm_data: Vec<u8> = "\x19Ethereum Signed Message:\n32".into();
+        evm_data.extend_from_slice(&data_hash);
 
         // 2. Calculate hash of prefixed hash
-        let hash = web3::signing::keccak256(&eth_data);
+        let hash = web3::signing::keccak256(&evm_data);
         let message = secp256k1::Message::from_slice(&hash).expect("Shouldn't fail");
 
         // 3. Sign
@@ -112,10 +112,10 @@ impl EthSigner {
             .sign_ecdsa_recoverable(&message, &self.secret_key)
             .serialize_compact();
 
-        // 4. Prepare for ETH
+        // 4. Prepare for EVM
         let mut ex_sign = [0u8; 65];
         ex_sign[..64].copy_from_slice(&signature);
-        // recovery id with eth specific offset
+        // recovery id with EVM specific offset
         ex_sign[64] = id.to_i32() as u8 + 27;
 
         // Done
@@ -131,13 +131,13 @@ impl EthSigner {
     }
 }
 
-pub struct TonSigner {
+pub struct TvmSigner {
     keypair: ed25519_dalek::Keypair,
     public_key: ed25519_dalek::PublicKey,
     public_key_bytes: UInt256,
 }
 
-impl TonSigner {
+impl TvmSigner {
     fn new(keypair: ed25519_dalek::Keypair) -> Self {
         let public_key = keypair.public;
 
@@ -195,13 +195,13 @@ impl TonSigner {
     }
 }
 
-pub struct SolSigner {
+pub struct SvmSigner {
     keypair: solana_sdk::signature::Keypair,
     public_key: solana_sdk::pubkey::Pubkey,
     public_key_bytes: UInt256,
 }
 
-impl SolSigner {
+impl SvmSigner {
     fn new(keypair: solana_sdk::signature::Keypair) -> Self {
         let public_key = keypair.pubkey();
 
@@ -325,29 +325,29 @@ mod tst {
     fn init() {
         let (_dir, path) = create_file();
 
-        let eth = UnencryptedEthData::from_phrase(
+        let evm = UnencryptedEvmData::from_phrase(
             TEST_PHRASE.into(),
-            UnencryptedEthData::DEFAULT_PATH.into(),
+            UnencryptedEvmData::DEFAULT_PATH.into(),
         )
         .unwrap();
-        let ton = UnencryptedTonData::from_phrase(
+        let tvm = UnencryptedTvmData::from_phrase(
             TEST_PHRASE.into(),
-            UnencryptedTonData::DEFAULT_PATH.into(),
+            UnencryptedTvmData::DEFAULT_PATH.into(),
         )
         .unwrap();
 
-        let data = StoredKeysData::new("lol", eth, ton).unwrap();
+        let data = StoredKeysData::new("lol", evm, tvm).unwrap();
         data.save(path).unwrap();
     }
 
     const JSON: &str = r#"{
           "salt": "R6fXVwOEHM0krZdN5tkV7GANS4I=",
-          "eth": {
+          "evm": {
                 "encrypted_seed_phrase": "pBYvQ7Hwz6Y6AdlR2Efuw0oCkLr13vpiW8zwT6PiZgr9EZ6nJlVw6jd1DLmb87488cQPkbn+WgzfaKPtrW2OY9VEnLTQW3jvTEJ83A4cX34KPm3aavI4fw==",
                 "encrypted_derivation_path": "ukliV+K+iuJ4DpkTmRath7cYwcoJk0gGyvGTz4CYGOE=",
                 "nonce": "21b9a0f8cd32819c87690e99"
           },
-          "ton": {
+          "tvm": {
                 "encrypted_seed_phrase": "F7eN49ZiCihQ0zitYxzpcmJrqI4usQNzi6aXzDU7fAaRIdP/EpjhET/ejKWiGxXDYvrDuGrR0Egf5V4lT5FeZpvIiOTn+HDqjj4qbM5LQ0k14rY7x0h8bg==",
                 "encrypted_derivation_path": "CejA94UsSmUD1Gf4KlK1KSvAwzjvaxvw+CFL9f5uSc90",
                 "nonce": "42f6b252f74728eca66abe0b"
@@ -359,15 +359,15 @@ mod tst {
         let (_dir, path) = create_file();
         let store = KeyStore::new(path, "lol".into()).unwrap();
 
-        let expected_ton_key =
+        let expected_tvm_key =
             hex::decode("6be37687497f5b54ffc9fec5c17e24be08e6cbcf8e240155b1735aa6da634183")
                 .unwrap();
-        let expected_eth_key =
+        let expected_evm_key =
             hex::decode("89d0fdd4e8ad43c60e5130741febe7c070e0e19223b011d99254fd2f0d206489")
                 .unwrap();
 
-        assert_eq!(store.ton.keypair.secret.as_ref(), &expected_ton_key);
-        assert_eq!(&store.eth.secret_key.as_ref()[..], &expected_eth_key);
+        assert_eq!(store.tvm.keypair.secret.as_ref(), &expected_tvm_key);
+        assert_eq!(&store.evm.secret_key.as_ref()[..], &expected_evm_key);
     }
 
     #[test]
@@ -388,7 +388,7 @@ mod tst {
         (dir, path)
     }
 
-    fn eth_secret_key() -> secp256k1::SecretKey {
+    fn evm_secret_key() -> secp256k1::SecretKey {
         secp256k1::SecretKey::from_slice(
             &hex::decode("416ddb82736d0ddf80cc50eda0639a2dd9f104aef121fb9c8af647ad8944a8b1")
                 .unwrap(),
@@ -400,7 +400,7 @@ mod tst {
     fn test_sign() {
         let message_text = b"hello_world1";
 
-        let signer = EthSigner::new(eth_secret_key());
+        let signer = EvmSigner::new(evm_secret_key());
         let res = signer.sign(message_text);
         let expected = hex::decode("ff244ad5573d02bc6ead270d5ff48c490b0113225dd61617791ba6610ed1e56a007ec790f8fca53243907b888e6b33ad15c52fed3bc6a7ee5da2fa287ea4f8211b").unwrap();
         assert_eq!(expected.len(), res.len());
@@ -409,7 +409,7 @@ mod tst {
 
     #[test]
     fn test_address_derive() {
-        let signer = EthSigner::new(eth_secret_key());
+        let signer = EvmSigner::new(evm_secret_key());
         let address = signer.address();
         let expected =
             ethabi::Address::from_str("9c5a095ae311cad1b09bc36ac8635f4ed4765dcf").unwrap();

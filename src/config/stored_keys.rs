@@ -16,15 +16,17 @@ pub struct StoredKeysData {
     #[serde(with = "serde_bytes_base64")]
     salt: Vec<u8>,
 
-    /// ETH part
-    eth: StoredKeysDataPart,
-    /// TON part
-    ton: StoredKeysDataPart,
+    /// EVM part
+    #[serde(alias = "eth")]
+    evm: StoredKeysDataPart,
+    /// TVM part
+    #[serde(alias = "ton")]
+    tvm: StoredKeysDataPart,
 }
 
 impl StoredKeysData {
-    /// Encrypts ETH and TON data
-    pub fn new(password: &str, eth: UnencryptedEthData, ton: UnencryptedTonData) -> Result<Self> {
+    /// Encrypts EVM and TVM data
+    pub fn new(password: &str, evm: UnencryptedEvmData, tvm: UnencryptedTvmData) -> Result<Self> {
         let mut rng = rand::rngs::OsRng;
         let salt: [u8; 20] = rng.gen();
 
@@ -33,31 +35,31 @@ impl StoredKeysData {
 
         Ok(Self {
             salt: salt.to_vec(),
-            eth: eth.encrypt(&encryptor, &mut rng)?,
-            ton: ton.encrypt(&encryptor, &mut rng)?,
+            evm: evm.encrypt(&encryptor, &mut rng)?,
+            tvm: tvm.encrypt(&encryptor, &mut rng)?,
         })
     }
 
-    /// Decrypts full ETH and TON data
-    pub fn decrypt(&self, password: &str) -> Result<(UnencryptedEthData, UnencryptedTonData)> {
+    /// Decrypts full EVM and TVM data
+    pub fn decrypt(&self, password: &str) -> Result<(UnencryptedEvmData, UnencryptedTvmData)> {
         let key = symmetric_key_from_password(password, &self.salt);
         let decrypter = ChaCha20Poly1305::new(&key);
 
-        let eth = UnencryptedEthData::decrypt(&decrypter, &self.eth)?;
-        let ton = UnencryptedTonData::decrypt(&decrypter, &self.ton)?;
+        let evm = UnencryptedEvmData::decrypt(&decrypter, &self.evm)?;
+        let tvm = UnencryptedTvmData::decrypt(&decrypter, &self.tvm)?;
 
-        Ok((eth, ton))
+        Ok((evm, tvm))
     }
 
-    /// Decrypts private keys from ETH and TON data
+    /// Decrypts private keys from EVM and TVM data
     pub fn decrypt_only_keys(&self, password: &str) -> Result<([u8; 32], [u8; 32])> {
         let key = symmetric_key_from_password(password, &self.salt);
         let decrypter = ChaCha20Poly1305::new(&key);
 
-        let eth = self.eth.decrypt_secret_key(&decrypter)?;
-        let ton = self.ton.decrypt_secret_key(&decrypter)?;
+        let evm = self.evm.decrypt_secret_key(&decrypter)?;
+        let tvm = self.tvm.decrypt_secret_key(&decrypter)?;
 
-        Ok((eth, ton))
+        Ok((evm, tvm))
     }
 
     /// Loads data from disk
@@ -100,14 +102,14 @@ impl StoredKeysDataPart {
     }
 }
 
-/// Raw ETH seed phrase with derived address
-pub struct UnencryptedEthData {
+/// Raw EVM seed phrase with derived address
+pub struct UnencryptedEvmData {
     phrase: SecUtf8,
     path: SecUtf8,
     address: ethabi::Address,
 }
 
-impl FromPhraseAndPath for UnencryptedEthData {
+impl FromPhraseAndPath for UnencryptedEvmData {
     const DEFAULT_PATH: &'static str = "m/44'/60'/0'/0/0";
 
     fn phrase(&self) -> &SecUtf8 {
@@ -125,7 +127,7 @@ impl FromPhraseAndPath for UnencryptedEthData {
         )?)?;
         let public_key =
             secp256k1::PublicKey::from_secret_key(&secp256k1::Secp256k1::new(), &secret_key);
-        let address = compute_eth_address(&public_key);
+        let address = compute_evm_address(&public_key);
 
         Ok(Self {
             phrase,
@@ -136,29 +138,29 @@ impl FromPhraseAndPath for UnencryptedEthData {
 
     fn as_printable(&self) -> serde_json::Value {
         #[derive(Serialize)]
-        struct PrintedUnencryptedEthData<'a> {
+        struct PrintedUnencryptedEvmData<'a> {
             phrase: &'a str,
             path: &'a str,
-            address: EthAddressWrapper<'a>,
+            address: EvmAddressWrapper<'a>,
         }
 
-        serde_json::to_value(PrintedUnencryptedEthData {
+        serde_json::to_value(PrintedUnencryptedEvmData {
             phrase: self.phrase.unsecure(),
             path: self.path.unsecure(),
-            address: EthAddressWrapper(&self.address),
+            address: EvmAddressWrapper(&self.address),
         })
         .trust_me()
     }
 }
 
-/// Raw TON seed phrase with derived public key
-pub struct UnencryptedTonData {
+/// Raw TVM seed phrase with derived public key
+pub struct UnencryptedTvmData {
     phrase: SecUtf8,
     path: SecUtf8,
     public_key: ed25519_dalek::PublicKey,
 }
 
-impl FromPhraseAndPath for UnencryptedTonData {
+impl FromPhraseAndPath for UnencryptedTvmData {
     const DEFAULT_PATH: &'static str = "m/44'/396'/0'/0/0";
 
     fn phrase(&self) -> &SecUtf8 {
@@ -185,13 +187,13 @@ impl FromPhraseAndPath for UnencryptedTonData {
 
     fn as_printable(&self) -> serde_json::Value {
         #[derive(Serialize)]
-        struct PrintedUnencryptedTonData<'a> {
+        struct PrintedUnencryptedTvmData<'a> {
             phrase: &'a str,
             path: &'a str,
             public_key: String,
         }
 
-        serde_json::to_value(PrintedUnencryptedTonData {
+        serde_json::to_value(PrintedUnencryptedTvmData {
             phrase: self.phrase.unsecure(),
             path: self.path.unsecure(),
             public_key: ton_types::UInt256::from(self.public_key.to_bytes()).to_hex_string(),

@@ -6,7 +6,7 @@ use crate::utils::*;
 /// EVM network settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EthConfig {
+pub struct EvmConfig {
     /// Chain ID of EVM network
     pub chain_id: u32,
 
