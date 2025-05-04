@@ -14,16 +14,16 @@ pub struct TokenInfo {
 #[derive(Clone)]
 pub struct TokenMetaClient {
     rq_client: reqwest::Client,
-    base_url: String,
+    base_url: url::Url,
     meta_cache: Arc<MemoryCache<String, TokenInfo>>,
 }
 
 impl TokenMetaClient {
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(base_url: &url::Url) -> Self {
         let rq_client = reqwest::Client::new();
         Self {
             rq_client,
-            base_url: base_url.to_owned(),
+            base_url: base_url.clone(),
             meta_cache: Arc::new(MemoryCache::new("token meta")),
         }
     }
@@ -37,7 +37,7 @@ impl TokenMetaClient {
 
                 let res = self
                     .rq_client
-                    .get(format!("{}/token/{address}", self.base_url))
+                    .get(self.base_url.join("token/")?.join(address)?)
                     .send()
                     .await
                     .context("failed to get token meta")?;
@@ -57,7 +57,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_api() {
-        let client = TokenMetaClient::new("https://ton-tokens-api.broxus.com");
+        let client =
+            TokenMetaClient::new(&url::Url::parse("https://ton-tokens-api.broxus.com").unwrap());
         let meta = client
             .get_token_meta("0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe")
             .await

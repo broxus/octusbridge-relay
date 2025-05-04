@@ -69,7 +69,7 @@ pub struct BridgeConfig {
 
     /// Ton token metadata endpoint base url
     #[cfg(feature = "ton")]
-    pub token_meta_base_url: String,
+    pub token_meta_base_url: url::Url,
 
     pub rpc_endpoints: Vec<url::Url>,
 }
