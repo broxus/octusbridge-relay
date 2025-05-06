@@ -81,6 +81,8 @@ nekoton-abi = { git = "https://github.com/broxus/nekoton.git", features = ["deri
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git", features = ["encryption"] }
 
 [features]
+legacy-bridge-contract = []
+legacy-contracts = []
 disable-staking = []
 venom = ["ton_block/venom"]
 ton = ["ton_block/ton", "disable-staking"]

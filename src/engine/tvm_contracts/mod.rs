@@ -35,10 +35,11 @@ mod models;
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(feature = "ton"))]
-const CONFIGURABLE_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_2;
-#[cfg(feature = "ton")]
-const CONFIGURABLE_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_3;
+const CONTRACTS_ABI_VERSION: ton_abi::contract::AbiVersion = if cfg!(feature = "legacy-contracts") {
+    LEGACY_ABI_VERSION
+} else {
+    LATEST_ABI_VERSION
+};
 
 pub struct EventBaseContract<'a>(pub &'a ExistingContract);
 

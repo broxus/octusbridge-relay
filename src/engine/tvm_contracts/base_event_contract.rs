@@ -1,12 +1,14 @@
 use nekoton_abi::*;
 
-use super::{models::*, CONFIGURABLE_ABI_VERSION};
+use super::models::*;
+
+const ABI_VERSION: ton_abi::contract::AbiVersion = super::CONTRACTS_ABI_VERSION;
 
 /// External function
 pub fn status() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new("status")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .default_headers()
             .output("status", EventStatus::param_type())
             .build()
@@ -17,7 +19,7 @@ pub fn status() -> &'static ton_abi::Function {
 pub fn round_number() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new("round_number")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .default_headers()
             .output("round_number", u32::param_type())
             .build()
@@ -28,7 +30,7 @@ pub fn round_number() -> &'static ton_abi::Function {
 pub fn created_at() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new("createdAt")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .default_headers()
             .output("createdAt", u32::param_type())
             .build()
@@ -39,7 +41,7 @@ pub fn created_at() -> &'static ton_abi::Function {
 pub fn get_voters() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new_responsible("getVoters")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .default_headers()
             .input("vote", EventVote::param_type())
             .outputs(RelayKeys::param_type())
@@ -51,7 +53,7 @@ pub fn get_voters() -> &'static ton_abi::Function {
 pub fn get_api_version() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new_responsible("getApiVersion")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .default_headers()
             .output("version", u32::param_type())
             .build()
@@ -62,7 +64,7 @@ pub fn get_api_version() -> &'static ton_abi::Function {
 pub fn receive_round_relays() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new("receiveRoundRelays")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .inputs(RelayKeys::param_type())
             .build()
     })
@@ -74,7 +76,7 @@ pub mod events {
     pub fn rejected() -> &'static ton_abi::Event {
         crate::once!(ton_abi::Event, || {
             EventBuilder::new("Rejected")
-                .abi_version(CONFIGURABLE_ABI_VERSION)
+                .abi_version(ABI_VERSION)
                 .input("reason", u32::param_type())
                 .build()
         })

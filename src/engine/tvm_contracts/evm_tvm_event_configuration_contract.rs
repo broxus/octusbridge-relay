@@ -1,12 +1,14 @@
 use nekoton_abi::*;
 
-use super::{models::*, CONFIGURABLE_ABI_VERSION};
+use super::models::*;
+
+const ABI_VERSION: ton_abi::contract::AbiVersion = super::CONTRACTS_ABI_VERSION;
 
 /// External function
 pub fn get_details() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new_responsible("getDetails")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .time_header()
             .expire_header()
             .outputs(EvmTvmEventConfigurationDetails::param_type())
@@ -18,7 +20,7 @@ pub fn get_details() -> &'static ton_abi::Function {
 pub fn set_end_block_number() -> &'static ton_abi::Function {
     crate::once!(ton_abi::Function, || {
         FunctionBuilder::new("setEndBlockNumber")
-            .abi_version(CONFIGURABLE_ABI_VERSION)
+            .abi_version(ABI_VERSION)
             .input("end_block_number", ton_abi::ParamType::Uint(32))
             .build()
     })
