@@ -31,6 +31,10 @@ pub struct AppConfig {
     /// Completely disable when not specified
     #[serde(default)]
     pub metrics_settings: Option<pomfrit::Config>,
+
+    /// File path to write logs into
+    #[serde(default)]
+    pub log_file: Option<PathBuf>,
 }
 
 /// Main application config (brief). Used for simple commands that require only password

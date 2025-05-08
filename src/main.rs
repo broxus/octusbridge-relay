@@ -1,4 +1,7 @@
 use std::borrow::Cow;
+use std::fmt::Debug;
+use std::fs::File;
+use std::process::exit;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -9,22 +12,22 @@ use relay::engine::*;
 use serde::Serialize;
 use tokio::signal::unix;
 use tokio::sync::mpsc;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 #[global_allocator]
 static GLOBAL: broxus_util::alloc::Allocator = broxus_util::alloc::allocator();
 
-fn main() -> Result<()> {
-    if atty::is(atty::Stream::Stdout) {
-        tracing_subscriber::fmt::init();
-    } else {
-        tracing_subscriber::fmt::fmt().without_time().init();
-    }
-
+fn main() {
     let ArgsOrVersion::<App>(app) = argh::from_env();
-    match app.command {
+    if let Err(error) = match app.command {
         Subcommand::Run(run) => run.execute(),
         Subcommand::Generate(generate) => generate.execute(),
         Subcommand::Export(export) => export.execute(),
+    } {
+        eprintln!("Program failed: {error:?}");
+        exit(1)
     }
 }
 
@@ -252,12 +255,39 @@ where
     P: AsRef<std::path::Path>,
 {
     let config: AppConfig = broxus_util::read_config(&config_path)?;
+
+    prepare_logging(&config)?;
+
     let state = Arc::new(Relay {
         config_path: config_path.as_ref().into(),
         engine: Default::default(),
     });
 
     Ok((state, config))
+}
+
+fn prepare_logging(config: &AppConfig) -> Result<()> {
+    let env_filter_layer = EnvFilter::from_default_env();
+    let stdout_log_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let file_log_layer = config
+        .log_file
+        .as_ref()
+        .map(|log_file| {
+            File::create(log_file)
+                .map(|file| tracing_stackdriver::layer().with_writer(Arc::new(file)))
+        })
+        .transpose()?;
+
+    let tracing_registry = tracing_subscriber::registry()
+        .with(env_filter_layer)
+        .with(stdout_log_layer);
+    if let Some(file_log_layer) = file_log_layer {
+        tracing_registry.with(file_log_layer).init();
+    } else {
+        tracing_registry.init();
+    }
+
+    Ok(())
 }
 
 struct Relay {
