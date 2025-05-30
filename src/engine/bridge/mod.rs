@@ -2882,7 +2882,7 @@ impl ReadFromTransaction for TvmEvmEventConfigurationEvent {
         match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
                 let end_timestamp = set_end_timestamp
-                    .decode_input(in_msg_body, true)
+                    .decode_input(in_msg_body, true, false)
                     .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
                     .ok()?;
 
@@ -2913,7 +2913,7 @@ impl ReadFromTransaction for EvmTvmEventConfigurationEvent {
         match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_block_number.input_id => {
                 let end_block_number = set_end_block_number
-                    .decode_input(in_msg_body, true)
+                    .decode_input(in_msg_body, true, false)
                     .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
                     .ok()?;
 
@@ -2945,7 +2945,7 @@ impl ReadFromTransaction for TvmSvmEventConfigurationEvent {
         match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
                 let end_timestamp = set_end_timestamp
-                    .decode_input(in_msg_body, true)
+                    .decode_input(in_msg_body, true, false)
                     .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
                     .ok()?;
 
@@ -2976,7 +2976,7 @@ impl ReadFromTransaction for SvmTvmEventConfigurationEvent {
         match read_function_id(&in_msg_body).ok()? {
             id if id == set_end_timestamp.input_id => {
                 let end_timestamp = set_end_timestamp
-                    .decode_input(in_msg_body, true)
+                    .decode_input(in_msg_body, true, false)
                     .and_then(|tokens| tokens.unpack_first().map_err(anyhow::Error::from))
                     .ok()?;
 
@@ -3034,7 +3034,7 @@ impl ReadFromTransaction for EvmTvmEvent {
                 match read_function_id(&body) {
                     Ok(id) if id == base_event_contract::receive_round_relays().input_id => {
                         let RelayKeys { items } = base_event_contract::receive_round_relays()
-                            .decode_input(body, true)
+                            .decode_input(body, true, false)
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
@@ -3084,7 +3084,7 @@ impl ReadFromTransaction for TvmEvmEvent {
                 match read_function_id(&body) {
                     Ok(id) if id == base_event_contract::receive_round_relays().input_id => {
                         let RelayKeys { items } = base_event_contract::receive_round_relays()
-                            .decode_input(body, true)
+                            .decode_input(body, true, false)
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
@@ -3142,7 +3142,7 @@ impl ReadFromTransaction for SvmTvmEvent {
                 match read_function_id(&body) {
                     Ok(id) if id == base_event_contract::receive_round_relays().input_id => {
                         let RelayKeys { items } = base_event_contract::receive_round_relays()
-                            .decode_input(body, true)
+                            .decode_input(body, true, false)
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 
@@ -3192,7 +3192,7 @@ impl ReadFromTransaction for TvmSvmEvent {
                 match read_function_id(&body) {
                     Ok(id) if id == base_event_contract::receive_round_relays().input_id => {
                         let RelayKeys { items } = base_event_contract::receive_round_relays()
-                            .decode_input(body, true)
+                            .decode_input(body, true, false)
                             .and_then(|tokens| tokens.unpack().map_err(anyhow::Error::from))
                             .ok()?;
 

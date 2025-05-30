@@ -580,7 +580,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.13.2",
+ "hashbrown 0.11.2",
 ]
 
 [[package]]
@@ -1388,12 +1388,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "diff"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
-
-[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1638,7 +1632,7 @@ dependencies = [
 [[package]]
 name = "eth-ton-abi-converter"
 version = "0.5.4"
-source = "git+https://github.com/broxus/eth-ton-abi-converter.git#5d91078e3c2f1c18c7a13a2487cf96618fa1e262"
+source = "git+https://github.com/broxus/eth-ton-abi-converter.git?branch=update-ton-abi#801f2a14b1f86f735258b629b847ef9b0a242b4a"
 dependencies = [
  "anyhow",
  "borsh 0.10.3",
@@ -2138,6 +2132,12 @@ dependencies = [
  "generic-array",
  "hmac 0.11.0",
 ]
+
+[[package]]
+name = "hmac-sha512"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77e806677ce663d0a199541030c816847b36e8dc095f70dae4a4f4ad63da5383"
 
 [[package]]
 name = "http"
@@ -2721,7 +2721,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2740,6 +2740,7 @@ dependencies = [
  "quick_cache",
  "serde",
  "serde_json",
+ "slip10_ed25519",
  "thiserror",
  "tokio",
  "ton_abi",
@@ -2751,7 +2752,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -2772,13 +2773,13 @@ dependencies = [
  "ton_block",
  "ton_executor",
  "ton_types",
- "ton_vm 1.8.29 (git+https://github.com/broxus/ton-labs-vm.git?branch=feature%2Fjetton)",
+ "ton_vm",
 ]
 
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2795,7 +2796,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "either",
  "proc-macro2 1.0.69",
@@ -2806,7 +2807,7 @@ dependencies = [
 [[package]]
 name = "nekoton-jetton"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -2823,7 +2824,7 @@ dependencies = [
 [[package]]
 name = "nekoton-proto"
 version = "0.1.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2835,7 +2836,7 @@ dependencies = [
 [[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git#c7bdb8816cfc540134a008be36629aeb1a1ef89a"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -3471,16 +3472,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pretty_assertions"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af7cee1a6c8a5b9208b3cb1061f10c0cb689087b3d8ce85fb9d2dd7a29b6ba66"
-dependencies = [
- "diff",
- "yansi",
-]
-
-[[package]]
 name = "primitive-types"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3896,7 +3887,6 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "pomfrit",
- "pretty_assertions",
  "rand 0.8.5",
  "reqwest",
  "rustc-hash",
@@ -4481,6 +4471,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f92a496fb766b417c996b9c5e57daf2f7ad3b0bebe1ccfca4856390e3d3bb67"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "slip10_ed25519"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4be0ff28bf14f9610a342169084e87a4f435ad798ec528dc7579a3678fa9dc9a"
+dependencies = [
+ "hmac-sha512",
 ]
 
 [[package]]
@@ -5915,7 +5914,7 @@ dependencies = [
 [[package]]
 name = "ton_abi"
 version = "2.1.0"
-source = "git+https://github.com/broxus/ton-labs-abi#b8834529ef8fa121d534fca6554c0e95d4019998"
+source = "git+https://github.com/broxus/ton-labs-abi#9386e9f5d6021f9ef072b2bb99bc10b70adb98ab"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -5937,7 +5936,7 @@ dependencies = [
 [[package]]
 name = "ton_block"
 version = "1.9.73"
-source = "git+https://github.com/broxus/ton-labs-block#eb87ac3abcf6b489d51e4da2e52f850594a1644f"
+source = "git+https://github.com/broxus/ton-labs-block#f1c3e222ee6a2b2ccf663f4f2df5e1335b95961a"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -5966,7 +5965,7 @@ dependencies = [
  "thiserror",
  "ton_block",
  "ton_types",
- "ton_vm 1.8.29 (git+https://github.com/broxus/ton-labs-vm.git)",
+ "ton_vm",
 ]
 
 [[package]]
@@ -5994,28 +5993,7 @@ dependencies = [
 [[package]]
 name = "ton_vm"
 version = "1.8.29"
-source = "git+https://github.com/broxus/ton-labs-vm.git?branch=feature%2Fjetton#e4ccbb7a6e90fa30c7ee55b85f2b9ad8be1518d2"
-dependencies = [
- "anyhow",
- "ed25519 1.5.3",
- "ed25519-dalek 1.0.1",
- "hex",
- "lazy_static",
- "log",
- "num 0.4.1",
- "num-traits",
- "rand 0.8.5",
- "sha2 0.9.9",
- "smallvec",
- "thiserror",
- "ton_block",
- "ton_types",
-]
-
-[[package]]
-name = "ton_vm"
-version = "1.8.29"
-source = "git+https://github.com/broxus/ton-labs-vm.git#bf49d876d0d81fd4ad2b184d3620721465fc10c5"
+source = "git+https://github.com/broxus/ton-labs-vm.git#3bb002f54daaa039c2450af32a29e969d2dca66c"
 dependencies = [
  "anyhow",
  "ed25519 1.5.3",
@@ -6779,12 +6757,6 @@ checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
 dependencies = [
  "linked-hash-map",
 ]
-
-[[package]]
-name = "yansi"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "yasna"
