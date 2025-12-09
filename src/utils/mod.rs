@@ -25,7 +25,7 @@ mod tristate;
 mod tx_context;
 
 pub const LEGACY_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_2;
-pub const LATEST_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_3;
+pub const LATEST_ABI_VERSION: ton_abi::contract::AbiVersion = ton_abi::contract::ABI_VERSION_2_7;
 
 #[macro_export]
 macro_rules! once {

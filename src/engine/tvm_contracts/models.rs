@@ -30,21 +30,21 @@ pub struct EvmTvmEventVoteData {
 
 #[derive(Debug, Clone, PackAbi, UnpackAbiPlain, KnownParamTypePlain)]
 pub struct EvmTvmEventDecodedData {
-    #[abi(name = "token_")]
-    pub token: MsgAddressInt,
-    #[abi(name = "amount_")]
+    #[abi(with = "address_only_hash")]
+    pub token: UInt256,
+    #[abi]
     pub amount: u128,
-    #[abi(name = "recipient_")]
-    pub recipient: MsgAddressInt,
-    #[abi(name = "value_")]
+    #[abi(with = "address_only_hash")]
+    pub recipient: UInt256,
+    #[abi]
     pub value: UInt256,
-    #[abi(name = "expected_gas_")]
+    #[abi]
     pub expected_gas: UInt256,
-    #[abi(name = "payload_")]
+    #[abi]
     pub payload: Cell,
-    #[abi(name = "proxy_")]
+    #[abi]
     pub proxy: MsgAddressInt,
-    #[abi(name = "tokenWallet_")]
+    #[abi]
     pub token_wallet: MsgAddressInt,
 }
 
@@ -170,6 +170,10 @@ pub enum EventStatus {
     Pending = 1,
     Confirmed = 2,
     Rejected = 3,
+    Cancelled = 4,
+    LimitReached = 5,
+    LiquidityRequested = 6,
+    LiquidityProvided = 7,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, PackAbi, UnpackAbi, KnownParamType)]

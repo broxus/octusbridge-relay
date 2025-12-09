@@ -767,8 +767,7 @@ impl Bridge {
                     );
                     let event_decoded_data = EvmTvmEventContract(&contract).event_decoded_data()?;
 
-                    let token_root = event_decoded_data.token.address();
-                    let token_root = UInt256::from_be_bytes(&token_root.get_bytestring(0));
+                    let token_root = event_decoded_data.token;
                     let root_contract = tvm_subscriber.wait_contract_state(&token_root).await?;
                     #[cfg(feature = "ton")]
                     let proxy_wallet_address = JettonMinterContract(&root_contract)
@@ -778,22 +777,13 @@ impl Bridge {
                         TokenRootContract(&root_contract).wallet_of(&event_decoded_data.proxy)?;
 
                     if event_decoded_data.token_wallet != proxy_wallet_address {
-                        let proxy = UInt256::from_be_bytes(
-                            &event_decoded_data.proxy.address().get_bytestring(0),
-                        );
-                        let expected = UInt256::from_be_bytes(
-                            &proxy_wallet_address.address().get_bytestring(0),
-                        );
-                        let actual = UInt256::from_be_bytes(
-                            &event_decoded_data.token_wallet.address().get_bytestring(0),
-                        );
                         tracing::error!(
                             event = %DisplayAddr(account),
                             chain_id,
-                            proxy = %DisplayAddr(proxy),
+                            proxy = %event_decoded_data.proxy,
                             token_root = %DisplayAddr(token_root),
-                            expected_token_wallet = %DisplayAddr(expected),
-                            actual_token_wallet = %DisplayAddr(actual),
+                            expected_token_wallet = %proxy_wallet_address,
+                            actual_token_wallet = %event_decoded_data.token_wallet,
                             "EVM->TVM wrong token wallet for given token root",
                         );
                         preliminary_checks_succeeded = false;
@@ -1234,6 +1224,7 @@ impl Bridge {
         // Wait contract state
         let contract = tvm_subscriber.wait_contract_state(&account).await?;
         let base_event_contract = EventBaseContract(&contract);
+        let tvm_svm_event_contract = TvmSvmEventContract(&contract);
 
         // Check further steps based on event statuses
         match base_event_contract.process(keystore.tvm.public_key(), true)? {
@@ -1245,10 +1236,10 @@ impl Bridge {
             EventAction::Vote => { /* continue voting */ }
         }
         let round_number = base_event_contract.round_number()?;
-        let created_at = base_event_contract.created_at()?;
+        let created_at = tvm_svm_event_contract.created_at()?;
 
         // Get event details
-        let event_init_data = TvmSvmEventContract(&contract).event_init_data()?;
+        let event_init_data = tvm_svm_event_contract.event_init_data()?;
 
         // Find suitable configuration
         // NOTE: be sure to drop `self.state` lock before removing pending ton event.

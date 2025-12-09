@@ -71,7 +71,7 @@ async fn get_evm_tvm_decoded_data_test() {
     let data = EvmTvmEventContract(&contract).event_decoded_data().unwrap();
 
     assert_eq!(
-        data.token.to_string(),
+        DisplayAddr(data.token).to_string(),
         "0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe" // USDT minter
     );
     assert_eq!(
@@ -113,7 +113,7 @@ async fn get_evm_tvm_decoded_data_test() {
     let data = EvmTvmEventContract(&contract).event_decoded_data().unwrap();
 
     assert_eq!(
-        data.token.to_string(),
+        DisplayAddr(data.token).to_string(),
         "0:a49cd4e158a9a15555e624759e2e4e766d22600b7800d891e46f9291f044a93d" // USDT token root
     );
     assert_eq!(

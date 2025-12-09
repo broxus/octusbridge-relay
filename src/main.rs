@@ -31,6 +31,7 @@ fn main() {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, FromArgs)]
 #[argh(description = "")]
 struct App {
@@ -231,11 +232,11 @@ impl CmdExport {
 }
 
 trait BriefAppConfigExt {
-    fn ask_password(&self, with_confirmation: bool) -> Result<Cow<secstr::SecUtf8>>;
+    fn ask_password(&self, with_confirmation: bool) -> Result<Cow<'_, secstr::SecUtf8>>;
 }
 
 impl BriefAppConfigExt for BriefAppConfig {
-    fn ask_password(&self, with_confirmation: bool) -> Result<Cow<secstr::SecUtf8>> {
+    fn ask_password(&self, with_confirmation: bool) -> Result<Cow<'_, secstr::SecUtf8>> {
         Ok(match self.master_password.as_ref() {
             Some(password) if !password.unsecure().is_empty() => Cow::Borrowed(password),
             _ => {

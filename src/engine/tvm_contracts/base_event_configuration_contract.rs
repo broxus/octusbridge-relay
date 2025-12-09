@@ -1,3 +1,4 @@
+use crate::engine::tvm_contracts::EventType;
 use nekoton_abi::*;
 
 const ABI_VERSION: ton_abi::contract::AbiVersion = super::CONTRACTS_ABI_VERSION;
@@ -8,7 +9,7 @@ pub fn get_type() -> &'static ton_abi::Function {
             .abi_version(ABI_VERSION)
             .time_header()
             .expire_header()
-            .output("type", ton_abi::ParamType::Uint(8))
+            .output("type", EventType::param_type())
             .build()
     })
 }
