@@ -166,6 +166,7 @@ impl EventConfigurationBaseContract<'_> {
             &nekoton_utils::SimpleClock,
             self.0.account.clone(),
             &[answer_id()],
+            &[],
         )?;
         if output.result_code == 60 {
             Ok(None)
