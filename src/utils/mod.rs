@@ -49,18 +49,6 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct DisplayCodeHash<T>(pub T);
-
-impl<T> std::fmt::Display for DisplayCodeHash<T>
-where
-    T: Borrow<ton_types::UInt256>,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{:x}", self.0.borrow()))
-    }
-}
-
 fn is_sorted_desc<EL, PROP: Ord>(arr: &[EL], by: fn(&EL) -> PROP) -> bool {
     arr.windows(2).all(|w| by(&w[0]) >= by(&w[1]))
 }

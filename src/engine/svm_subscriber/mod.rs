@@ -1,11 +1,11 @@
-use std::collections::{hash_map, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::{HashSet, hash_map};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use rustc_hash::FxHashMap;
-use tokio::sync::{oneshot, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore, oneshot};
 
 use solana_bridge::bridge_state::Proposal;
 use solana_client::client_error::{ClientError, ClientErrorKind};
@@ -244,9 +244,10 @@ impl SvmSubscriber {
         let relay_round_account_data = match relay_round_account {
             Some(account) => solana_bridge::round_loader::RelayRound::unpack(account.data())?,
             None => {
-                return Err(
-                    SvmSubscriberError::InvalidRoundAccount(relay_round_pubkey.to_string()).into(),
+                return Err(SvmSubscriberError::InvalidRoundAccount(
+                    relay_round_pubkey.to_string(),
                 )
+                .into());
             }
         };
 

@@ -3,6 +3,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
+use base64::Engine;
+use base64::engine::general_purpose;
 use nekoton_abi::*;
 use nekoton_utils::TrustMe;
 use secstr::SecUtf8;
@@ -104,7 +106,7 @@ impl EvmSigner {
 
         // 2. Calculate hash of prefixed hash
         let hash = web3::signing::keccak256(&evm_data);
-        let message = secp256k1::Message::from_slice(&hash).expect("Shouldn't fail");
+        let message = secp256k1::Message::from_slice(&hash).expect("keccak256 hash is 32 bytes");
 
         // 3. Sign
         let (id, signature) = self
@@ -182,7 +184,7 @@ impl TvmSigner {
         );
 
         let bytes = ton_block::Serializable::write_to_bytes(&message)?;
-        tracing::info!("MESSAGE: {}", base64::encode(bytes));
+        tracing::info!("MESSAGE: {}", general_purpose::STANDARD.encode(bytes));
 
         Ok(SignedMessage {
             account: unsigned_message.account,

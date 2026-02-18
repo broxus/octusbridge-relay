@@ -4,11 +4,11 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use anyhow::Result;
-use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use nekoton_utils::TrustMe;
 use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc};
 use ton_block::{GetRepresentationHash, MsgAddressInt};
 use ton_types::UInt256;
 use tvm_rpc_client::RpcClient;
@@ -118,7 +118,7 @@ impl TvmSubscriber {
     }
 
     async fn get_latest_lt_for_account(&self, account: &UInt256) -> u64 {
-        self.get_contract_state_with_retry(account, 5)
+        self.get_contract_state_with_retry(account, 5, None)
             .await
             .ok()
             .flatten()
@@ -126,15 +126,24 @@ impl TvmSubscriber {
             .unwrap_or_default()
     }
 
+    pub async fn get_transaction_subscription_latest_lt(&self, account: &UInt256) -> Option<u64> {
+        let state_subscriptions = self.account_subscriptions.lock().await;
+
+        state_subscriptions
+            .get(account)
+            .map(|s| s.latest_lt.load(Ordering::Acquire))
+    }
+
     pub async fn get_contract_state_with_retry(
         &self,
         account: &UInt256,
         max_retries: u32,
+        last_lt: Option<u64>,
     ) -> Result<Option<ExistingContract>> {
         let mut attempt = 0;
 
         loop {
-            match self.get_contract_state(account).await {
+            match self.get_contract_state(account, last_lt).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     attempt += 1;
@@ -155,10 +164,14 @@ impl TvmSubscriber {
         }
     }
 
-    pub async fn get_contract_state(&self, account: &UInt256) -> Result<Option<ExistingContract>> {
+    pub async fn get_contract_state(
+        &self,
+        account: &UInt256,
+        last_lt: Option<u64>,
+    ) -> Result<Option<ExistingContract>> {
         let account_id = ton_types::AccountId::from(account);
         let address = &MsgAddressInt::with_standart(None, 0, account_id)?;
-        let state = self.rpc_client.get_contract_state(address, None).await;
+        let state = self.rpc_client.get_contract_state(address, last_lt).await;
         state.map(|state_opt| {
             state_opt.map(|state| ExistingContract {
                 account: state.account,
@@ -169,7 +182,7 @@ impl TvmSubscriber {
 
     pub async fn wait_contract_state(&self, account: &UInt256) -> Result<ExistingContract> {
         loop {
-            let Some(contract_state) = self.get_contract_state(account).await? else {
+            let Some(contract_state) = self.get_contract_state(account, None).await? else {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
             };
@@ -179,7 +192,7 @@ impl TvmSubscriber {
                     return Ok(contract_state);
                 }
                 ton_block::AccountState::AccountFrozen { .. } => {
-                    return Err(TonSubscriberError::AccountIsFrozen.into())
+                    return Err(TonSubscriberError::AccountIsFrozen.into());
                 }
                 ton_block::AccountState::AccountUninit => {
                     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -193,6 +206,7 @@ impl TvmSubscriber {
         &self,
         account: &UInt256,
         oldest_transaction_lt: u64,
+        last_transaction_lt: Option<u64>,
     ) -> Result<Vec<ton_block::Transaction>> {
         const TRANSACTION_LIMIT: u8 = 100;
 
@@ -202,7 +216,7 @@ impl TvmSubscriber {
         let address = &MsgAddressInt::with_standart(None, 0, account_id)?;
         let mut transactions = self
             .rpc_client
-            .get_transactions(TRANSACTION_LIMIT, address, None)
+            .get_transactions(TRANSACTION_LIMIT, address, last_transaction_lt)
             .await?;
         if transactions.len() < TRANSACTION_LIMIT as usize {
             transactions.retain(|transaction| transaction.lt >= oldest_transaction_lt);
@@ -237,39 +251,6 @@ impl TvmSubscriber {
         Ok(transactions)
     }
 
-    pub async fn get_accounts_by_code_hash(
-        &self,
-        code_hash: UInt256,
-    ) -> Result<Vec<MsgAddressInt>> {
-        let hash = *code_hash.as_slice();
-        let mut accounts = self
-            .rpc_client
-            .get_accounts_by_code_hash(hash, None, 100)
-            .await?;
-        if accounts.is_empty() {
-            return Ok(accounts);
-        }
-
-        loop {
-            let next_batch = self
-                .rpc_client
-                .get_accounts_by_code_hash(hash, accounts.last(), 100)
-                .await?;
-            if next_batch.is_empty() {
-                break;
-            }
-            accounts.extend(next_batch);
-        }
-
-        tracing::info!(
-            code_hash = %DisplayCodeHash(code_hash),
-            "Found {} accounts",
-            accounts.len()
-        );
-
-        Ok(accounts)
-    }
-
     async fn poll_transactions(self: &Arc<Self>) -> Result<()> {
         let mut subscriptions = self.account_subscriptions.lock().await;
         subscriptions.retain(|_, subscription| {
@@ -285,7 +266,7 @@ impl TvmSubscriber {
 
             tasks.push(tokio::spawn(async move {
                 let _permit = this.pool.acquire().await;
-                let account_state = match this.get_contract_state(&account).await {
+                let account_state = match this.get_contract_state(&account, None).await {
                     Ok(Some(account_state)) => account_state,
                     Ok(None) => {
                         tracing::warn!(address = %DisplayAddr(account), "Account does not exist");
@@ -297,7 +278,8 @@ impl TvmSubscriber {
                     }
                 };
 
-                let transactions = match this.get_transactions(&account, latest_lt + 1).await {
+                let transactions =
+                    match this.get_transactions(&account, latest_lt + 1, None).await {
                     Ok(transactions) => transactions,
                     Err(e) => {
                         tracing::error!(address = %DisplayAddr(account), "Failed to poll transactions: {e:?}");
@@ -585,7 +567,7 @@ enum TonSubscriberError {
 #[cfg(test)]
 mod tests {
     use crate::engine::tvm_subscriber::{SignatureId, TvmSubscriber};
-    use crate::utils::{only_account_hash, PendingMessagesQueue};
+    use crate::utils::{PendingMessagesQueue, only_account_hash};
     use nekoton_utils::TrustMe;
     use std::str::FromStr;
     use ton_block::MsgAddressInt;
@@ -626,7 +608,7 @@ mod tests {
         let account = only_account_hash(account);
         let latest_lt = 54948624000006;
         let txs = tvm_subscriber
-            .get_transactions(&account, latest_lt + 1)
+            .get_transactions(&account, latest_lt + 1, None)
             .await
             .trust_me();
 

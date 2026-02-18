@@ -33,6 +33,7 @@ impl AddressVerificationState {
     {
         let file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .read(true)
             .open(path)?;

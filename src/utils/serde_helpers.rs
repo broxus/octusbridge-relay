@@ -9,8 +9,8 @@ pub const fn const_u64<const N: u64>() -> u64 {
 pub mod serde_commitment {
     use std::str::FromStr;
 
-    use serde::de::Error;
     use serde::Deserialize;
+    use serde::de::Error;
     use solana_sdk::commitment_config::CommitmentConfig;
 
     pub fn serialize<S>(data: &CommitmentConfig, serializer: S) -> Result<S::Ok, S::Error>

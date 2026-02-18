@@ -392,6 +392,7 @@ impl JettonMinterContract<'_> {
         let context = ExecutionContext {
             clock: &nekoton_utils::SimpleClock,
             account_stuff: &self.0.account,
+            libraries: &[],
         };
         let owner_address =
             StackItem::Slice(ton_types::SliceData::load_cell(owner_address.serialize()?)?);

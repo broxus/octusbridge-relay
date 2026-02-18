@@ -27,8 +27,8 @@ pub struct StoredKeysData {
 impl StoredKeysData {
     /// Encrypts EVM and TVM data
     pub fn new(password: &str, evm: UnencryptedEvmData, tvm: UnencryptedTvmData) -> Result<Self> {
-        let mut rng = rand::rngs::OsRng;
-        let salt: [u8; 20] = rng.gen();
+        let mut rng = rand::rng();
+        let salt: [u8; 20] = rng.random();
 
         let key = symmetric_key_from_password(password, &salt);
         let encryptor = ChaCha20Poly1305::new(&key);
@@ -153,7 +153,7 @@ impl FromPhraseAndPath for UnencryptedEvmData {
     }
 }
 
-/// Raw TVM seed phrase with derived public key
+/// Raw TVM seed phrase with a derived public key
 pub struct UnencryptedTvmData {
     phrase: SecUtf8,
     path: SecUtf8,
@@ -255,9 +255,9 @@ fn derive_secret_from_phrase(phrase: &str, path: &str) -> Result<[u8; 32]> {
     Ok(derived.secret())
 }
 
-fn generate_nonce(rng: &mut impl rand::Rng) -> Nonce {
+fn generate_nonce(rng: &mut impl Rng) -> Nonce {
     use chacha20poly1305::aead::generic_array::sequence::GenericSequence;
-    Nonce::generate(|_| rng.gen())
+    Nonce::generate(|_| rng.random())
 }
 
 #[derive(thiserror::Error, Debug)]

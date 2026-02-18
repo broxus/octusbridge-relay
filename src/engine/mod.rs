@@ -136,7 +136,7 @@ impl Engine {
         let bridge_contract = match self
             .context
             .tvm_subscriber
-            .get_contract_state(&bridge_account)
+            .get_contract_state(&bridge_account, None)
             .await?
         {
             Some(contract) => contract,

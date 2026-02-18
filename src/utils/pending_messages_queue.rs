@@ -1,6 +1,6 @@
 use std::collections::hash_map;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use anyhow::Result;
 use parking_lot::Mutex;

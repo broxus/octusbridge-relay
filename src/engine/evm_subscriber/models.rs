@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use web3::types::{Log, H160, H256};
+use web3::types::{H160, H256, Log};
 
 pub type EventId = (H256, u32);
 

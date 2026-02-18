@@ -4,15 +4,15 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use nekoton_abi::UnpackAbiPlain;
 use parking_lot::Mutex;
+use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
 use tokio::sync::mpsc;
-use tokio::sync::Notify;
 use ton_types::UInt256;
 
+use crate::engine::EngineContext;
 use crate::engine::keystore::*;
 use crate::engine::tvm_contracts::*;
 use crate::engine::tvm_subscriber::*;
-use crate::engine::EngineContext;
 use crate::utils::*;
 
 /// Rounds part of relays logic
@@ -62,7 +62,7 @@ impl Staking {
             // Get all info from staking contract
             let staking_contract = ctx
                 .tvm_subscriber
-                .get_contract_state(&staking_account)
+                .get_contract_state(&staking_account, None)
                 .await?
                 .context("Staking contract not found")?;
             let staking_contract = StakingContract(&staking_contract);
@@ -78,7 +78,7 @@ impl Staking {
             // Get all info from current relay round contract
             let relay_round_details = match ctx
                 .tvm_subscriber
-                .get_contract_state(&relay_round_address)
+                .get_contract_state(&relay_round_address, None)
                 .await?
             {
                 Some(contract) => RelayRoundContract(&contract)
@@ -110,7 +110,7 @@ impl Staking {
 
         let user_data_contract = ctx
             .tvm_subscriber
-            .get_contract_state(&user_data_account)
+            .get_contract_state(&user_data_account, None)
             .await?
             .context("User data account not found")?;
         let user_data_balance = UserDataContract(&user_data_contract)
@@ -204,7 +204,7 @@ impl Staking {
     ) -> Result<bool> {
         let elections_contract = ctx
             .tvm_subscriber
-            .get_contract_state(elections_account_address)
+            .get_contract_state(elections_account_address, None)
             .await?
             .context("Next elections contract not found")?;
         let elections_contract = ElectionsContract(&elections_contract);
@@ -232,7 +232,7 @@ impl Staking {
         tracing::info!("searching for the staking account");
         let tvm_subscriber = &self.context.tvm_subscriber;
         let staking_contract = tvm_subscriber
-            .get_contract_state(&self.staking_account)
+            .get_contract_state(&self.staking_account, None)
             .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
@@ -265,7 +265,7 @@ impl Staking {
         let relay_round_contract = match self
             .context
             .tvm_subscriber
-            .get_contract_state(&relay_round_address)
+            .get_contract_state(&relay_round_address, None)
             .await
         {
             Ok(Some(contract)) => contract,
@@ -688,7 +688,7 @@ impl Staking {
     async fn update_participates_in_round_status(&self) -> Result<()> {
         let tvm_subscriber = &self.context.tvm_subscriber;
         let staking_contract = tvm_subscriber
-            .get_contract_state(&self.staking_account)
+            .get_contract_state(&self.staking_account, None)
             .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
@@ -701,7 +701,7 @@ impl Staking {
             .get_relay_round_address(relay_rounds_details.current_relay_round)
             .context("Failed to compute relay round address")?;
         let relay_round_contract = tvm_subscriber
-            .get_contract_state(&relay_round_address)
+            .get_contract_state(&relay_round_address, None)
             .await?
             .context("Current relay round contract not found")?;
         let relay_round_contract = RelayRoundContract(&relay_round_contract);
@@ -738,7 +738,7 @@ impl EngineContext {
     async fn ensure_user_data_confirmed(self: &Arc<Self>, staking_account: UInt256) -> Result<()> {
         let staking_contract = self
             .tvm_subscriber
-            .get_contract_state(&staking_account)
+            .get_contract_state(&staking_account, None)
             .await?
             .context("Staking contract not found")?;
         let staking_contract = StakingContract(&staking_contract);
@@ -757,7 +757,7 @@ impl EngineContext {
         tracing::info!(account = %DisplayAddr(user_data_account), "found user data account");
         let user_data_contract = self
             .tvm_subscriber
-            .get_contract_state(&user_data_account)
+            .get_contract_state(&user_data_account, None)
             .await?
             .context("User data account not found")?;
         let user_data_contract = UserDataContract(&user_data_contract);
@@ -912,7 +912,7 @@ impl<'a> StakingContract<'a> {
             .get_details()
             .context("Failed to get staking details")?;
         let configuration_contract = tvm_subscriber
-            .get_contract_state(&details.bridge_event_config_evm_tvm)
+            .get_contract_state(&details.bridge_event_config_evm_tvm, None)
             .await?
             .context("Bridge EVM->TVM event configuration not found")?;
 

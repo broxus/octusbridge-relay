@@ -12,9 +12,9 @@ use relay::engine::*;
 use serde::Serialize;
 use tokio::signal::unix;
 use tokio::sync::mpsc;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 #[global_allocator]
 static GLOBAL: broxus_util::alloc::Allocator = broxus_util::alloc::allocator();
@@ -240,10 +240,10 @@ impl BriefAppConfigExt for BriefAppConfig {
         Ok(match self.master_password.as_ref() {
             Some(password) if !password.unsecure().is_empty() => Cow::Borrowed(password),
             _ => {
-                let mut password = Password::new();
-                password.with_prompt("Enter password");
+                let mut password = Password::new().with_prompt("Enter password");
                 if with_confirmation {
-                    password.with_confirmation("Confirm password", "Passwords mismatching");
+                    password =
+                        password.with_confirmation("Confirm password", "Passwords mismatching");
                 }
                 Cow::Owned(password.interact()?.into())
             }

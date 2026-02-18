@@ -1,20 +1,22 @@
 use std::collections::hash_map;
 use std::convert::TryFrom;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use base64::Engine;
+use base64::engine::general_purpose;
 use dashmap::DashMap;
 use either::Either;
 use futures_util::StreamExt;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tokio::sync::{oneshot, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore, oneshot};
 use tokio::time::timeout;
 use ton_types::UInt256;
 use web3::api::Namespace;
 use web3::types::{BlockNumber, FilterBuilder, H256, U64};
-use web3::{transports::Http, Transport};
+use web3::{Transport, transports::Http};
 
 use self::models::*;
 use crate::config::*;
@@ -211,7 +213,7 @@ impl EvmSubscriber {
                         .await
                         .context("Failed to find EVM address verification transaction")?
                     {
-                        // Check if found transaction was included in block
+                        // Check if found transaction was included in the block
                         Some(transaction) => match transaction.block_hash {
                             // If it was included, consider that the address is confirmed
                             Some(block) => {
@@ -407,7 +409,7 @@ impl EvmSubscriber {
     async fn update(&self) -> Result<()> {
         if self.pending_confirmations.lock().await.is_empty() {
             // Wait until new events appeared or idle poll interval passed.
-            // NOTE: Idle polling is needed there to prevent large intervals from occurring (e.g. BSC)
+            // NOTE: Idle polling is needed there to prevent large intervals from occurring (e.g., BSC)
             tokio::select! {
                 _ = self.new_events_notify.notified() => {},
                 _ = tokio::time::sleep(Duration::from_secs(self.config.poll_interval_sec)) => {},
@@ -440,7 +442,7 @@ impl EvmSubscriber {
             Err(e) if is_incomplete_message(&e) => return Ok(()),
             Err(e) => {
                 return Err(e)
-                    .with_context(|| format!("Failed to get actual EVM-{chain_id} height"))
+                    .with_context(|| format!("Failed to get actual EVM-{chain_id} height"));
             }
         };
 
@@ -450,7 +452,7 @@ impl EvmSubscriber {
             "got new EVM-{chain_id} block height",
         );
 
-        // Check last processed block
+        // Check the last processed block
         let last_processed_block = self.last_processed_block.load(Ordering::Acquire);
         if last_processed_block >= current_block {
             // NOTE: tokio::select is not used here because it will retry requests immediately if
@@ -493,7 +495,7 @@ impl EvmSubscriber {
                         "failed processing EVM-{chain_id} blocks in range \
                         from {last_processed_block} to {current_block}",
                     )
-                })
+                });
             }
             Err(_) => {
                 tracing::warn!(
@@ -589,7 +591,7 @@ impl EvmSubscriber {
                     Err(e) => {
                         tracing::error!(
                             chain_id,
-                            tx = hex::encode(event_id.0 .0),
+                            tx = hex::encode(event_id.0.0),
                             event_idnex = event_id.1,
                             "failed to check EVM-{chain_id} event: {e:?}",
                         );
@@ -804,14 +806,14 @@ impl PendingConfirmation {
         let vote_data = &self.vote_data;
 
         // NOTE: event_index and transaction_hash are already checked while searching
-        // EVM event log, but here they are also checked just in case.
+        //  the EVM event log, but here they are also checked just in case.
         let result = if event.address.0 != self.event_emitter {
             Err(format!(
                 "Event emitter address mismatch. From event: {:x}. Expected: {}",
                 event.address,
                 hex::encode(self.event_emitter.as_slice())
             ))
-        } else if &event.topic_hash != self.event_abi.get_eth_topic_hash() {
+        } else if event.topic_hash.0 != self.event_abi.get_eth_topic_hash().0 {
             Err(format!(
                 "Topic hash mismatch. From event: {:x}. Expected: {:x}",
                 event.topic_hash,
@@ -848,7 +850,7 @@ impl PendingConfirmation {
                     let boc = ton_types::serialize_toc(&data).unwrap_or_default();
                     Err(format!(
                         "Event data mismatch. Expected: {}",
-                        base64::encode(boc)
+                        general_purpose::STANDARD.encode(boc)
                     ))
                 }
                 Err(e) => Err(format!("Failed to convert event data: {e:?}")),
@@ -866,7 +868,7 @@ type VerificationStatusTx = oneshot::Sender<VerificationStatus>;
 
 fn parse_transaction_logs(
     logs: Vec<web3::types::Log>,
-) -> impl Iterator<Item = ParsedEvmEvent> + DoubleEndedIterator {
+) -> impl DoubleEndedIterator<Item = ParsedEvmEvent> {
     logs.into_iter()
         .map(ParsedEvmEvent::try_from)
         .filter_map(|event| match event {

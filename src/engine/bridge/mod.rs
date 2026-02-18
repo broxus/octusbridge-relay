@@ -1,17 +1,18 @@
 use std::collections::hash_map;
 use std::future::Future;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use borsh::BorshDeserialize;
 #[allow(unused_imports)]
 use evm_tvm_abi_converter::{
-    decode_ton_event_abi as decode_tvm_event_abi, make_mapped_ton_event as make_mapped_tvm_event,
-    map_ton_tokens_to_eth_bytes as map_tvm_tokens_to_evm_bytes, EthEventAbi as EvmEventAbi,
-    EthToTonMappingContext as EvmToTvmMappingContext, TonToEthContext as TvmToEvmContext,
+    EthEventAbi as EvmEventAbi, EthToTonMappingContext as EvmToTvmMappingContext,
+    TonToEthContext as TvmToEvmContext, decode_ton_event_abi as decode_tvm_event_abi,
+    make_mapped_ton_event as make_mapped_tvm_event,
+    map_ton_tokens_to_eth_bytes as map_tvm_tokens_to_evm_bytes,
 };
 use nekoton_abi::*;
 use nekoton_utils::TrustMe;
@@ -23,16 +24,17 @@ use solana_client::rpc_response::RpcSimulateTransactionResult;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::TransactionError;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use ton_abi::TokenValue;
+use ton_block::GetRepresentationHash;
 use ton_types::UInt256;
 
+use crate::engine::EngineContext;
 use crate::engine::keystore::*;
 use crate::engine::svm_subscriber::*;
 use crate::engine::tvm_contracts::*;
 use crate::engine::tvm_subscriber::*;
-use crate::engine::EngineContext;
 use crate::utils::*;
 
 /// Events part of relays logic
@@ -1456,7 +1458,7 @@ impl Bridge {
             .is_already_voted(rpc_client, round_number, &proposal_pubkey, &voter_pubkey)
             .await?
         {
-            // Extract vote and log it
+            // Extract a vote and log it
             let c_ix = svm_message_vote.instructions.first().trust_me();
             let ix = solana_bridge::instructions::VoteForProposal::try_from_slice(&c_ix.data)?;
 
@@ -1616,7 +1618,7 @@ impl Bridge {
         let tvm_subscriber = &self.context.tvm_subscriber;
 
         let contract = tvm_subscriber
-            .get_contract_state(&self.bridge_account)
+            .get_contract_state(&self.bridge_account, None)
             .await
             .context("Failed to get bridge account state")?
             .ok_or(BridgeError::BridgeAccountNotFound)?;
@@ -1628,14 +1630,14 @@ impl Bridge {
 
         // Iterate for all connectors
         for id in 0..connector_count {
-            // Compute next connector address
+            // Compute the next connector address
             let connector_account = bridge
                 .derive_connector_address(id)
                 .context("Failed to derive connector address")?;
 
-            // Extract details from contract
+            // Extract details from the contract
             let details = match tvm_subscriber
-                .get_contract_state(&connector_account)
+                .get_contract_state(&connector_account, None)
                 .await
                 .context("Failed to get connector account state")?
             {
@@ -1684,13 +1686,13 @@ impl Bridge {
 
             // Find event configuration contract
             let configuration_contract = match tvm_subscriber
-                .get_contract_state(&configuration_account)
+                .get_contract_state(&configuration_account, None)
                 .await
                 .context("Failed to get configuration state")?
             {
                 Some(contract) => contract,
                 None => {
-                    // It is a strange situation when connector contains an address of the contract
+                    // It is a strange situation when the connector contains an address of the contract
                     // which doesn't exist, so log it here to investigate it later
                     tracing::warn!(
                         connector = %DisplayAddr(connector_account),
@@ -1819,19 +1821,12 @@ impl Bridge {
         let topic_hash = event_abi.get_eth_topic_hash().to_fixed_bytes();
         let evm_contract_address = details.network_configuration.event_emitter;
 
-        // Get suitable EVM subscriber for specified chain id
+        // Get a suitable EVM subscriber for a specified chain id
         let evm_subscriber = self
             .context
             .evm_subscribers
             .get_subscriber(details.network_configuration.chain_id)
             .ok_or(BridgeError::UnknownChainId)?;
-
-        // Add unique event hash
-        add_event_code_hash(
-            &mut state.event_code_hashes,
-            &details.basic_configuration.event_code,
-            EventType::EvmTvm,
-        )?;
 
         // Add configuration entry
         let observer = AccountObserver::new(&self.evm_tvm_event_configurations_tx);
@@ -1911,13 +1906,6 @@ impl Bridge {
         // Verify and prepare abi
         let event_abi = decode_tvm_event_abi(&details.basic_configuration.event_abi)?;
 
-        // Add unique event hash
-        add_event_code_hash(
-            &mut state.event_code_hashes,
-            &details.basic_configuration.event_code,
-            EventType::TvmEvm,
-        )?;
-
         // Add configuration entry
         let observer = AccountObserver::new(&self.tvm_evm_event_configurations_tx);
         match state.tvm_evm_event_configurations.entry(*account) {
@@ -1992,13 +1980,6 @@ impl Bridge {
 
         // Verify and prepare abi
         let event_abi = decode_tvm_event_abi(&details.basic_configuration.event_abi)?;
-
-        // Add unique event hash
-        add_event_code_hash(
-            &mut state.event_code_hashes,
-            &details.basic_configuration.event_code,
-            EventType::SvmTvm,
-        )?;
 
         // Add configuration entry
         let observer = AccountObserver::new(&self.svm_tvm_event_configurations_tx);
@@ -2076,13 +2057,6 @@ impl Bridge {
         // Verify and prepare abi
         let event_abi = decode_tvm_event_abi(&details.basic_configuration.event_abi)?;
 
-        // Add unique event hash
-        add_event_code_hash(
-            &mut state.event_code_hashes,
-            &details.basic_configuration.event_code,
-            EventType::TvmSvm,
-        )?;
-
         // Get SVM program address to subscribe
         let program_pubkey = Pubkey::new_from_array(details.network_configuration.program.inner());
 
@@ -2128,214 +2102,99 @@ impl Bridge {
     }
 
     async fn get_all_events(self: &Arc<Self>) -> Result<()> {
-        type AccountsSet = FxHashSet<UInt256>;
-
-        #[allow(clippy::too_many_arguments)]
-        async fn iterate_events(
-            bridge: Arc<Bridge>,
-            code_hash: UInt256,
-            event_type: EventType,
-            unique_evm_tvm_event_configurations: Arc<AccountsSet>,
-            unique_tvm_evm_event_configurations: Arc<AccountsSet>,
-            unique_svm_tvm_event_configurations: Arc<AccountsSet>,
-            unique_tvm_svm_event_configurations: Arc<AccountsSet>,
-        ) -> Result<()> {
-            let our_public_key = bridge.context.keystore.tvm.public_key();
-            let has_svm_subscriber = bridge.context.svm_subscriber.is_some();
-
-            let tvm_subscriber = &bridge.context.tvm_subscriber;
-            let addresses = tvm_subscriber
-                .get_accounts_by_code_hash(code_hash)
-                .await
-                .context("Failed to get accounts by code hash")?;
-
-            for address in addresses {
-                let hash = UInt256::from_be_bytes(&address.address().get_bytestring(0));
-
-                let contract = tvm_subscriber
-                    .get_contract_state(&hash)
-                    .await?
-                    .ok_or(BridgeError::AccountNotFound(hash.to_hex_string()))?;
-
-                macro_rules! check_configuration {
-                    ($contract: ident) => {
-                        match $contract(&contract).event_init_data() {
-                            Ok(init_data) => init_data.configuration,
-                            Err(e) => {
-                                tracing::info!(
-                                    event = %DisplayAddr(hash),
-                                    ?event_type,
-                                    "failed to get event init data: {e:?}"
-                                );
-                                continue;
-                            }
-                        }
-                    };
-                }
-
-                // Process event
-                match EventBaseContract(&contract)
-                    .process(our_public_key, event_type == EventType::TvmEvm)
-                {
-                    Ok(EventAction::Nop | EventAction::Vote) => match event_type {
-                        EventType::EvmTvm => {
-                            let configuration = check_configuration!(EvmTvmEventContract);
-
-                            if !unique_evm_tvm_event_configurations.contains(&configuration) {
-                                tracing::warn!(
-                                    event = %DisplayAddr(hash),
-                                    configuration = %DisplayAddr(configuration),
-                                    "EVM->TVM event configuration not found"
-                                );
-                                continue;
-                            }
-
-                            if bridge
-                                .add_pending_event(hash, &bridge.evm_tvm_events_state)
-                                .await
-                            {
-                                bridge.spawn_background_task(
-                                    "initial update EVM->TVM event",
-                                    bridge.clone().update_evm_tvm_event(hash),
-                                );
-                            }
-                        }
-                        EventType::TvmEvm => {
-                            let configuration = check_configuration!(TvmEvmEventContract);
-
-                            if !unique_tvm_evm_event_configurations.contains(&configuration) {
-                                tracing::warn!(
-                                    event = %DisplayAddr(hash),
-                                    configuration = %DisplayAddr(configuration),
-                                    "TVM->EVM event configuration not found",
-                                );
-                                continue;
-                            }
-
-                            if bridge
-                                .add_pending_event(hash, &bridge.tvm_evm_events_state)
-                                .await
-                            {
-                                bridge.spawn_background_task(
-                                    "initial update TVM->EVM event",
-                                    bridge.clone().update_tvm_evm_event(hash),
-                                );
-                            }
-                        }
-                        EventType::SvmTvm if has_svm_subscriber => {
-                            let configuration = check_configuration!(SvmTvmEventContract);
-
-                            if !unique_svm_tvm_event_configurations.contains(&configuration) {
-                                tracing::warn!(
-                                    event = %DisplayAddr(hash),
-                                    configuration = %DisplayAddr(configuration),
-                                    "SVM->TVM event configuration not found",
-                                );
-                                continue;
-                            }
-
-                            if bridge
-                                .add_pending_event(hash, &bridge.svm_tvm_events_state)
-                                .await
-                            {
-                                bridge.spawn_background_task(
-                                    "initial update SVM->TVM event",
-                                    bridge.clone().update_svm_tvm_event(hash),
-                                );
-                            }
-                        }
-                        EventType::TvmSvm if has_svm_subscriber => {
-                            let configuration = check_configuration!(TvmSvmEventContract);
-
-                            if !unique_tvm_svm_event_configurations.contains(&configuration) {
-                                tracing::warn!(
-                                    event = %DisplayAddr(hash),
-                                    configuration = %DisplayAddr(configuration),
-                                    "TVM->SVM event configuration not found",
-                                );
-                                continue;
-                            }
-
-                            if bridge
-                                .add_pending_event(hash, &bridge.tvm_svm_events_state)
-                                .await
-                            {
-                                bridge.spawn_background_task(
-                                    "initial update TVM->SVM event",
-                                    bridge.clone().update_tvm_svm_event(hash),
-                                );
-                            }
-                        }
-                        _ => {}
-                    },
-                    Ok(EventAction::Remove) => { /* do nothing */ }
-                    Err(e) => {
-                        tracing::error!(
-                            event = %DisplayAddr(hash),
-                            ?event_type,
-                            "failed to get event details: {e:?}",
-                        );
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
         // Lock state to prevent adding new configurations
         let state = self.state.read().await;
+        let has_svm_subscriber = self.context.svm_subscriber.is_some();
 
-        // Prepare shard task context
-        let event_code_hashes = &state.event_code_hashes;
-
-        // NOTE: configuration sets are explicitly constructed from state instead of
+        // NOTE: configuration sets are explicitly constructed from the state instead of
         // just using [evm/tvm/svm]_event_counters. It is done on purpose to use the actual
         // configurations. It is acceptable that event counters will not be relevant
-        let unique_evm_tvm_event_configurations =
-            Arc::new(state.unique_evm_tvm_event_configurations());
-        let unique_tvm_evm_event_configurations =
-            Arc::new(state.unique_tvm_evm_event_configurations());
-        let unique_svm_tvm_event_configurations =
-            Arc::new(state.unique_svm_tvm_event_configurations());
-        let unique_tvm_svm_event_configurations =
-            Arc::new(state.unique_tvm_svm_event_configurations());
+        let unique_evm_tvm_event_configurations = state.unique_evm_tvm_event_configurations();
+        let unique_tvm_evm_event_configurations = state.unique_tvm_evm_event_configurations();
+        let unique_svm_tvm_event_configurations = state.unique_svm_tvm_event_configurations();
+        let unique_tvm_svm_event_configurations = state.unique_tvm_svm_event_configurations();
 
-        let start = std::time::Instant::now();
+        let start = Instant::now();
 
         tracing::info!("started searching for all events");
         let mut results_rx = {
             let (results_tx, results_rx) = mpsc::unbounded_channel();
 
-            for (code_hash, event_type) in event_code_hashes {
-                let code_hash = *code_hash;
-                let event_type = *event_type;
+            for (event_type, configuration_account) in unique_evm_tvm_event_configurations
+                .into_iter()
+                .map(|v| (EventType::EvmTvm, v))
+                .chain(
+                    unique_tvm_evm_event_configurations
+                        .into_iter()
+                        .map(|v| (EventType::TvmEvm, v)),
+                )
+                .chain(
+                    unique_svm_tvm_event_configurations
+                        .into_iter()
+                        .map(|v| (EventType::SvmTvm, v)),
+                )
+                .chain(
+                    unique_tvm_svm_event_configurations
+                        .into_iter()
+                        .map(|v| (EventType::TvmSvm, v)),
+                )
+            {
+                if matches!(event_type, EventType::SvmTvm | EventType::TvmSvm)
+                    && !has_svm_subscriber
+                {
+                    continue;
+                }
+
+                let Some(latest_lt) = self
+                    .context
+                    .tvm_subscriber
+                    .get_transaction_subscription_latest_lt(&configuration_account)
+                    .await
+                else {
+                    continue;
+                };
+
+                let Ok(Some(configuration)) = self
+                    .context
+                    .tvm_subscriber
+                    .get_contract_state_with_retry(&configuration_account, 3, Some(latest_lt))
+                    .await
+                else {
+                    tracing::warn!(
+                        configuration = %DisplayAddr(configuration_account),
+                        lt = %latest_lt,
+                        "failed getting configuration state, skipping"
+                    );
+                    continue;
+                };
 
                 let bridge = self.clone();
                 let results_tx = results_tx.clone();
 
-                let unique_evm_tvm_event_configurations =
-                    unique_evm_tvm_event_configurations.clone();
-                let unique_tvm_evm_event_configurations =
-                    unique_tvm_evm_event_configurations.clone();
-                let unique_svm_tvm_event_configurations =
-                    unique_svm_tvm_event_configurations.clone();
-                let unique_tvm_svm_event_configurations =
-                    unique_tvm_svm_event_configurations.clone();
-
                 tokio::spawn(async move {
-                    let start = std::time::Instant::now();
-                    let result = iterate_events(
-                        bridge,
-                        code_hash,
-                        event_type,
-                        unique_evm_tvm_event_configurations,
-                        unique_tvm_evm_event_configurations,
-                        unique_svm_tvm_event_configurations,
-                        unique_tvm_svm_event_configurations,
-                    )
-                    .await;
+                    let start = Instant::now();
+                    let result = match event_type {
+                        EventType::EvmTvm => bridge
+                            .iterate_evm_tvm_events(configuration)
+                            .await
+                            .context("Failed to iterate EVM->TVM events"),
+                        EventType::TvmEvm => bridge
+                            .iterate_tvm_evm_events(configuration)
+                            .await
+                            .context("Failed to iterate TVM->EVM events"),
+                        EventType::SvmTvm => bridge
+                            .iterate_svm_tvm_events(configuration)
+                            .await
+                            .context("Failed to iterate SVM->TVM events"),
+                        EventType::TvmSvm => bridge
+                            .iterate_tvm_svm_events(configuration)
+                            .await
+                            .context("Failed to iterate TVM->SVM events"),
+                        EventType::TvmTvm => Ok(()),
+                    };
                     tracing::info!(
-                        code_hash = %DisplayCodeHash(code_hash),
+                        configuration = %DisplayAddr(configuration_account),
+                        ?event_type,
                         elapsed_sec = start.elapsed().as_secs(),
                         "processed accounts",
                     );
@@ -2349,7 +2208,7 @@ impl Bridge {
         // Wait until all shards are processed
         while let Some(result) = results_rx.recv().await {
             if let Err(e) = result {
-                return Err(e).context("Failed to find all events");
+                tracing::error!("failed to iterate events: {e:?}");
             }
         }
 
@@ -2358,6 +2217,197 @@ impl Bridge {
             elapsed_sec = start.elapsed().as_secs(),
             "finished iterating all events",
         );
+        Ok(())
+    }
+
+    async fn iterate_evm_tvm_events(
+        self: Arc<Self>,
+        configuration: ExistingContract,
+    ) -> Result<()> {
+        self.iterate_configuration_events(configuration, EventType::EvmTvm, |ctx| {
+            match EvmTvmEventConfigurationEvent::read_from_transaction(ctx) {
+                Some(EvmTvmEventConfigurationEvent::EventsDeployed { events }) => Some(events),
+                _ => None,
+            }
+        })
+        .await
+    }
+
+    async fn iterate_tvm_evm_events(
+        self: Arc<Self>,
+        configuration: ExistingContract,
+    ) -> Result<()> {
+        self.iterate_configuration_events(configuration, EventType::TvmEvm, |ctx| {
+            match TvmEvmEventConfigurationEvent::read_from_transaction(ctx) {
+                Some(TvmEvmEventConfigurationEvent::EventDeployed { address }) => {
+                    Some(vec![address])
+                }
+                _ => None,
+            }
+        })
+        .await
+    }
+
+    async fn iterate_svm_tvm_events(
+        self: Arc<Self>,
+        configuration: ExistingContract,
+    ) -> Result<()> {
+        self.iterate_configuration_events(configuration, EventType::SvmTvm, |ctx| {
+            match SvmTvmEventConfigurationEvent::read_from_transaction(ctx) {
+                Some(SvmTvmEventConfigurationEvent::EventsDeployed { events }) => Some(events),
+                _ => None,
+            }
+        })
+        .await
+    }
+
+    async fn iterate_tvm_svm_events(
+        self: Arc<Self>,
+        configuration: ExistingContract,
+    ) -> Result<()> {
+        self.iterate_configuration_events(configuration, EventType::TvmSvm, |ctx| {
+            match TvmSvmEventConfigurationEvent::read_from_transaction(ctx) {
+                Some(TvmSvmEventConfigurationEvent::EventDeployed { address }) => {
+                    Some(vec![address])
+                }
+                _ => None,
+            }
+        })
+        .await
+    }
+
+    async fn iterate_configuration_events<F>(
+        self: Arc<Self>,
+        configuration: ExistingContract,
+        event_type: EventType,
+        mut extract_events: F,
+    ) -> Result<()>
+    where
+        F: for<'a> FnMut(&TxContext<'a>) -> Option<Vec<UInt256>>,
+    {
+        let configuration_account = only_account_hash(configuration.account.addr());
+        let transactions = self
+            .context
+            .tvm_subscriber
+            .get_transactions(
+                &configuration_account,
+                0,
+                Some(configuration.last_transaction_id.lt()),
+            )
+            .await?;
+
+        for transaction in transactions {
+            let Some(ref in_msg) = transaction
+                .in_msg
+                .as_ref()
+                .and_then(|m| m.read_struct().ok())
+            else {
+                continue;
+            };
+
+            let transaction_info = match transaction.description.read_struct() {
+                Ok(ton_block::TransactionDescr::Ordinary(info)) if !info.aborted => info,
+                _ => continue,
+            };
+
+            let hash = match transaction.hash() {
+                Ok(hash) => hash,
+                Err(_) => continue,
+            };
+
+            let ctx = TxContext {
+                account_state: &configuration,
+                account: &configuration_account,
+                transaction_hash: &hash,
+                transaction_info: &transaction_info,
+                transaction: &transaction,
+                in_msg,
+            };
+
+            if let Some(event_accounts) = extract_events(&ctx) {
+                for event_account in event_accounts {
+                    self.process_event_from_configuration(event_type, event_account)
+                        .await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn process_event_from_configuration(
+        self: &Arc<Self>,
+        event_type: EventType,
+        event_account: UInt256,
+    ) -> Result<()> {
+        let our_public_key = self.context.keystore.tvm.public_key();
+
+        let contract = self
+            .context
+            .tvm_subscriber
+            .get_contract_state(&event_account, None)
+            .await?
+            .ok_or(BridgeError::AccountNotFound(event_account.to_hex_string()))?;
+
+        match EventBaseContract(&contract).process(our_public_key, event_type == EventType::TvmEvm)
+        {
+            Ok(EventAction::Nop | EventAction::Vote) => match event_type {
+                EventType::EvmTvm => {
+                    if self
+                        .add_pending_event(event_account, &self.evm_tvm_events_state)
+                        .await
+                    {
+                        self.spawn_background_task(
+                            "initial update EVM->TVM event",
+                            self.clone().update_evm_tvm_event(event_account),
+                        );
+                    }
+                }
+                EventType::TvmEvm => {
+                    if self
+                        .add_pending_event(event_account, &self.tvm_evm_events_state)
+                        .await
+                    {
+                        self.spawn_background_task(
+                            "initial update TVM->EVM event",
+                            self.clone().update_tvm_evm_event(event_account),
+                        );
+                    }
+                }
+                EventType::SvmTvm => {
+                    if self
+                        .add_pending_event(event_account, &self.svm_tvm_events_state)
+                        .await
+                    {
+                        self.spawn_background_task(
+                            "initial update SVM->TVM event",
+                            self.clone().update_svm_tvm_event(event_account),
+                        );
+                    }
+                }
+                EventType::TvmSvm => {
+                    if self
+                        .add_pending_event(event_account, &self.tvm_svm_events_state)
+                        .await
+                    {
+                        self.spawn_background_task(
+                            "initial update TVM->SVM event",
+                            self.clone().update_tvm_svm_event(event_account),
+                        );
+                    }
+                }
+                EventType::TvmTvm => {}
+            },
+            Ok(EventAction::Remove) => { /* do nothing */ }
+            Err(e) => {
+                tracing::error!(
+                    event = %DisplayAddr(event_account),
+                    ?event_type,
+                    "failed to get event details: {e:?}",
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -2608,13 +2658,6 @@ struct BridgeState {
     tvm_evm_event_configurations: TvmEvmEventConfigurationsMap,
     svm_tvm_event_configurations: SvmTvmEventConfigurationsMap,
     tvm_svm_event_configurations: TvmSvmEventConfigurationsMap,
-
-    /// Unique event contracts code hashes.
-    ///
-    /// NOTE: only built on startup and then updated on each new configuration.
-    /// Elements are not removed because it is not needed (the situation when one
-    /// contract code will be used for EVM and TVM simultaneously)
-    event_code_hashes: EventCodeHashesMap,
 }
 
 impl BridgeState {
@@ -2651,26 +2694,6 @@ impl BridgeState {
     fn unique_tvm_svm_event_configurations(&self) -> FxHashSet<UInt256> {
         self.tvm_svm_event_configurations.keys().copied().collect()
     }
-}
-
-fn add_event_code_hash(
-    event_code_hashes: &mut EventCodeHashesMap,
-    code: &ton_types::Cell,
-    event_type: EventType,
-) -> Result<()> {
-    match event_code_hashes.entry(code.repr_hash()) {
-        // Just insert if it was not in the map
-        hash_map::Entry::Vacant(entry) => {
-            entry.insert(event_type);
-        }
-        // Do nothing if it was there with the same event type, otherwise return an error
-        hash_map::Entry::Occupied(entry) => {
-            if entry.get() != &event_type {
-                return Err(BridgeError::InvalidEventConfiguration.into());
-            }
-        }
-    };
-    Ok(())
 }
 
 impl EventBaseContract<'_> {
@@ -3284,7 +3307,6 @@ type EvmTvmEventConfigurationsMap = FxHashMap<UInt256, EvmTvmEventConfigurationS
 type TvmEvmEventConfigurationsMap = FxHashMap<UInt256, TvmEvmEventConfigurationState>;
 type SvmTvmEventConfigurationsMap = FxHashMap<UInt256, SvmTvmEventConfigurationState>;
 type TvmSvmEventConfigurationsMap = FxHashMap<UInt256, TvmSvmEventConfigurationState>;
-type EventCodeHashesMap = FxHashMap<UInt256, EventType>;
 
 #[derive(Debug, Clone, Hash)]
 pub enum VerificationStatus {
@@ -3302,8 +3324,6 @@ enum BridgeError {
     UnknownConfiguration,
     #[error("Bridge account not found")]
     BridgeAccountNotFound,
-    #[error("Invalid event configuration")]
-    InvalidEventConfiguration,
     #[error("Event configuration already exists")]
     EventConfigurationAlreadyExists,
     #[error("Account `{0}` not found")]
