@@ -136,7 +136,7 @@ impl Engine {
         let bridge_contract = match self
             .context
             .tvm_subscriber
-            .get_contract_state(&bridge_account, None)
+            .get_contract_state(&bridge_account)
             .await?
         {
             Some(contract) => contract,
@@ -269,12 +269,12 @@ impl EngineContext {
         T: Send + 'static,
         F: FnMut() -> bool + 'static,
     {
-        // Check if message should be sent
+        // Check if a message should be sent
         while condition() {
             let signature_id = self.tvm_subscriber.signature_id();
 
             // Prepare and send the message
-            // NOTE: it must be signed every time before sending because it uses current
+            // NOTE: it must be signed every time before sending because it uses the current
             // timestamp in headers. It will not work outside this loop
             let message = self.keystore.tvm.sign(&unsigned_message, signature_id)?;
 
@@ -283,7 +283,7 @@ impl EngineContext {
                 .await?
             {
                 MessageStatus::Expired => {
-                    // Do nothing on expire and just retry
+                    // Do nothing on expiry and just retry
                     tracing::warn!(account = %DisplayAddr(message.account), "message expired");
                 }
                 MessageStatus::Aborted => {
@@ -301,7 +301,7 @@ impl EngineContext {
             }
         }
 
-        // Make sure that observer is living long enough. Messages will not be found
+        // Make sure that the observer is living long enough. Messages will not be found
         // if it is deleted too early
         drop(observer);
         Ok(())

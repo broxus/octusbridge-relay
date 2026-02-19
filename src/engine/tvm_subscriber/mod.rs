@@ -118,7 +118,7 @@ impl TvmSubscriber {
     }
 
     async fn get_latest_lt_for_account(&self, account: &UInt256) -> u64 {
-        self.get_contract_state_with_retry(account, 5, None)
+        self.get_contract_state_with_retry(account, 5)
             .await
             .ok()
             .flatten()
@@ -126,24 +126,15 @@ impl TvmSubscriber {
             .unwrap_or_default()
     }
 
-    pub async fn get_transaction_subscription_latest_lt(&self, account: &UInt256) -> Option<u64> {
-        let state_subscriptions = self.account_subscriptions.lock().await;
-
-        state_subscriptions
-            .get(account)
-            .map(|s| s.latest_lt.load(Ordering::Acquire))
-    }
-
     pub async fn get_contract_state_with_retry(
         &self,
         account: &UInt256,
         max_retries: u32,
-        last_lt: Option<u64>,
     ) -> Result<Option<ExistingContract>> {
         let mut attempt = 0;
 
         loop {
-            match self.get_contract_state(account, last_lt).await {
+            match self.get_contract_state(account).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     attempt += 1;
@@ -164,14 +155,10 @@ impl TvmSubscriber {
         }
     }
 
-    pub async fn get_contract_state(
-        &self,
-        account: &UInt256,
-        last_lt: Option<u64>,
-    ) -> Result<Option<ExistingContract>> {
+    pub async fn get_contract_state(&self, account: &UInt256) -> Result<Option<ExistingContract>> {
         let account_id = ton_types::AccountId::from(account);
         let address = &MsgAddressInt::with_standart(None, 0, account_id)?;
-        let state = self.rpc_client.get_contract_state(address, last_lt).await;
+        let state = self.rpc_client.get_contract_state(address, None).await;
         state.map(|state_opt| {
             state_opt.map(|state| ExistingContract {
                 account: state.account,
@@ -182,7 +169,7 @@ impl TvmSubscriber {
 
     pub async fn wait_contract_state(&self, account: &UInt256) -> Result<ExistingContract> {
         loop {
-            let Some(contract_state) = self.get_contract_state(account, None).await? else {
+            let Some(contract_state) = self.get_contract_state(account).await? else {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
             };
@@ -266,7 +253,7 @@ impl TvmSubscriber {
 
             tasks.push(tokio::spawn(async move {
                 let _permit = this.pool.acquire().await;
-                let account_state = match this.get_contract_state(&account, None).await {
+                let account_state = match this.get_contract_state(&account).await {
                     Ok(Some(account_state)) => account_state,
                     Ok(None) => {
                         tracing::warn!(address = %DisplayAddr(account), "Account does not exist");

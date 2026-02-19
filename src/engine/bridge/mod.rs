@@ -188,7 +188,7 @@ impl Bridge {
             );
         }
 
-        // Subscribe bridge account to transactions
+        // Subscribe a bridge account to transactions
         bridge
             .context
             .tvm_subscriber
@@ -231,7 +231,7 @@ impl Bridge {
     ) -> Result<()> {
         match event {
             BridgeEvent::ConnectorDeployed(event) => {
-                // Create connector entry if it wasn't already created
+                // Create a connector entry if it wasn't already created
                 match self.state.write().await.connectors.entry(event.connector) {
                     hash_map::Entry::Vacant(entry) => {
                         // Create observer
@@ -254,7 +254,7 @@ impl Bridge {
                     }
                 };
 
-                // Check connector contract if it was added in this iteration
+                // Check the connector contract if it was added in this iteration
                 tokio::spawn(async move {
                     if let Err(e) = self.check_connector_contract(event.connector).await {
                         tracing::error!("failed to check connector contract: {e:?}");
@@ -280,7 +280,7 @@ impl Bridge {
         (account, event): (UInt256, EvmTvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
-            // Create observer on each deployment event
+            // Create an observer on each deployment event
             EvmTvmEventConfigurationEvent::EventsDeployed { events } => {
                 for address in events {
                     if self
@@ -313,7 +313,7 @@ impl Bridge {
         (account, event): (UInt256, TvmEvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
-            // Create observer on each deployment event
+            // Create an observer on each deployment event
             TvmEvmEventConfigurationEvent::EventDeployed { address, .. } => {
                 if self
                     .add_pending_event(address, &self.tvm_evm_events_state)
@@ -326,7 +326,7 @@ impl Bridge {
                     });
                 } else {
                     // NOTE: Each TVM event must be unique on the contracts level,
-                    // so receiving message with duplicated address is
+                    // so receiving a message with a duplicated address is
                     // a signal that something went wrong
                     tracing::warn!(
                         configuration = %DisplayAddr(account),
@@ -353,7 +353,7 @@ impl Bridge {
         (account, event): (UInt256, SvmTvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
-            // Create observer on each deployment event
+            // Create an observer on each deployment event
             SvmTvmEventConfigurationEvent::EventsDeployed { events } => {
                 for address in events {
                     if self
@@ -386,7 +386,7 @@ impl Bridge {
         (account, event): (UInt256, TvmSvmEventConfigurationEvent),
     ) -> Result<()> {
         match event {
-            // Create observer on each deployment event
+            // Create an observer on each deployment event
             TvmSvmEventConfigurationEvent::EventDeployed { address, .. } => {
                 if self
                     .add_pending_event(address, &self.tvm_svm_events_state)
@@ -399,7 +399,7 @@ impl Bridge {
                     });
                 } else {
                     // NOTE: Each TVM event must be unique on the contracts level,
-                    // so receiving message with duplicated address is
+                    // so receiving a message with a duplicated address is
                     // a signal that something went wrong
                     tracing::warn!(
                         configuration = %DisplayAddr(account),
@@ -441,12 +441,12 @@ impl Bridge {
             };
 
             match event {
-                // Remove event if voting process was finished
+                // Remove event if a voting process was finished
                 (EvmTvmEvent::Rejected, _)
                 | (_, EventStatus::Confirmed | EventStatus::Rejected) => remove_entry(),
                 // Handle event initialization
                 (EvmTvmEvent::ReceiveRoundRelays { keys }, _) => {
-                    // Check if event contains our key
+                    // Check if an event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
@@ -497,7 +497,7 @@ impl Bridge {
             };
 
             match event {
-                // Remove event in confirmed state if the balance is not enough.
+                // Remove the event in the confirmed state if the balance is not enough.
                 //
                 // NOTE: it is not strictly necessary to collect all signatures, so the
                 // contract subscription is allowed to be dropped on nearly empty balance.
@@ -506,11 +506,11 @@ impl Bridge {
                 // or execution `confirm` or `reject` after several years so that the cost of
                 // keeping the contract almost nullifies its balance.
                 (TvmEvmEvent::Closed, EventStatus::Confirmed) => remove_entry(),
-                // Remove event if it was rejected
+                // Remove an event if it was rejected
                 (TvmEvmEvent::Rejected, _) | (_, EventStatus::Rejected) => remove_entry(),
                 // Handle event initialization
                 (TvmEvmEvent::ReceiveRoundRelays { keys }, _) => {
-                    // Check if event contains our key
+                    // Check if an event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
@@ -561,12 +561,12 @@ impl Bridge {
             };
 
             match event {
-                // Remove event if voting process was finished
+                // Remove event if a voting process was finished
                 (SvmTvmEvent::Rejected, _)
                 | (_, EventStatus::Confirmed | EventStatus::Rejected) => remove_entry(),
                 // Handle event initialization
                 (SvmTvmEvent::ReceiveRoundRelays { keys }, _) => {
-                    // Check if event contains our key
+                    // Check if an event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
@@ -617,7 +617,7 @@ impl Bridge {
             };
 
             match event {
-                // Remove event in confirmed state if the balance is not enough.
+                // Remove the event in the confirmed state if the balance is not enough.
                 //
                 // NOTE: it is not strictly necessary to collect all signatures, so the
                 // contract subscription is allowed to be dropped on nearly empty balance.
@@ -626,12 +626,12 @@ impl Bridge {
                 // or execution `confirm` or `reject` after several years so that the cost of
                 // keeping the contract almost nullifies its balance.
                 (TvmSvmEvent::Closed, EventStatus::Confirmed) => remove_entry(),
-                // Remove event if it was rejected
+                // Remove an event if it was rejected
                 (TvmSvmEvent::Rejected, _) | (_, EventStatus::Rejected) => remove_entry(),
 
                 // Handle event initialization
                 (TvmSvmEvent::ReceiveRoundRelays { keys }, _) => {
-                    // Check if event contains our key
+                    // Check if an event contains our key
                     if keys.contains(our_public_key) {
                         // Start voting
                         self.spawn_background_task(
@@ -792,7 +792,7 @@ impl Bridge {
                     }
                 }
 
-                // Get required subscriber
+                // Get the required subscriber
                 match evm_subscribers.get_subscriber(chain_id) {
                     Some(subscriber) => (
                         subscriber,
@@ -826,7 +826,7 @@ impl Bridge {
 
         let account_addr = ton_block::MsgAddrStd::with_address(None, 0, account.into());
 
-        // Verify EVM event and create message to event contract
+        // Verify the EVM event and create a message to the event contract
         let message = match evm_subscriber
             .verify(
                 event_init_data.vote_data,
@@ -860,7 +860,7 @@ impl Bridge {
             }
         };
 
-        // Clone events observer and deliver message to the contract
+        // Clone events observer and deliver a message to the contract
         let evm_tvm_event_observer = match self.evm_tvm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
@@ -915,7 +915,7 @@ impl Bridge {
         }
 
         // Find suitable configuration
-        // NOTE: be sure to drop `self.state` lock before removing pending ton event.
+        // NOTE: be sure to drop the `self.state` lock before removing pending ton event.
         // It may deadlock otherwise!
         let data = {
             let state = self.state.read().await;
@@ -1050,7 +1050,7 @@ impl Bridge {
             }
         };
 
-        // Clone events observer and deliver message to the contract
+        // Clone events observer and deliver a message to the contract
         let tvm_evm_event_observer = match self.tvm_evm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
@@ -1096,7 +1096,7 @@ impl Bridge {
         let event_init_data = SvmTvmEventContract(&contract).event_init_data()?;
 
         // Find suitable configuration
-        // NOTE: be sure to drop `self.state` lock before removing pending ton event.
+        // NOTE: be sure to drop the `self.state` lock before removing pending ton event.
         // It may deadlock otherwise!
         let data = {
             let state = self.state.read().await;
@@ -1191,7 +1191,7 @@ impl Bridge {
             }
         };
 
-        // Clone events observer and deliver message to the contract
+        // Clone events observer and deliver a message to the contract
         let svm_tvm_event_observer = match self.svm_tvm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
@@ -1244,7 +1244,7 @@ impl Bridge {
         let event_init_data = tvm_svm_event_contract.event_init_data()?;
 
         // Find suitable configuration
-        // NOTE: be sure to drop `self.state` lock before removing pending ton event.
+        // NOTE: be sure to drop the `self.state` lock before removing pending ton event.
         // It may deadlock otherwise!
         let data = {
             let state = self.state.read().await;
@@ -1540,7 +1540,7 @@ impl Bridge {
             }
         }
 
-        // Clone events observer and deliver message to the contract
+        // Clone events observer and deliver a message to the contract
         let tvm_svm_event_observer = match self.tvm_svm_events_state.pending.get(&account) {
             Some(entry) => entry.observer.clone(),
             None => return Ok(()),
@@ -1567,7 +1567,7 @@ impl Bridge {
 
         // Get event configuration address
         let event_configuration = {
-            // Wait until connector contract state is found
+            // Wait until a connector contract state is found
             let contract = tvm_subscriber
                 .wait_contract_state(&connector_account)
                 .await?;
@@ -1587,7 +1587,7 @@ impl Bridge {
             connector_details.event_configuration
         };
 
-        // Wait until event configuration state is found
+        // Wait until the event configuration state is found
         let contract = tvm_subscriber
             .wait_contract_state(&event_configuration)
             .await?;
@@ -1597,7 +1597,7 @@ impl Bridge {
             "got configuration contract",
         );
 
-        // Extract and process info from contract
+        // Extract and process info from a contract
         let mut state = self.state.write().await;
         self.process_event_configuration(
             &mut state,
@@ -1618,7 +1618,7 @@ impl Bridge {
         let tvm_subscriber = &self.context.tvm_subscriber;
 
         let contract = tvm_subscriber
-            .get_contract_state(&self.bridge_account, None)
+            .get_contract_state(&self.bridge_account)
             .await
             .context("Failed to get bridge account state")?
             .ok_or(BridgeError::BridgeAccountNotFound)?;
@@ -1637,7 +1637,7 @@ impl Bridge {
 
             // Extract details from the contract
             let details = match tvm_subscriber
-                .get_contract_state(&connector_account, None)
+                .get_contract_state(&connector_account)
                 .await
                 .context("Failed to get connector account state")?
             {
@@ -1671,7 +1671,7 @@ impl Bridge {
 
             let observer = AccountObserver::new(&self.connectors_tx);
 
-            // Add new connector
+            // Add a new connector
             state.connectors.insert(connector_account, observer.clone());
 
             // Subscribe connector for transaction
@@ -1686,7 +1686,7 @@ impl Bridge {
 
             // Find event configuration contract
             let configuration_contract = match tvm_subscriber
-                .get_contract_state(&configuration_account, None)
+                .get_contract_state(&configuration_account)
                 .await
                 .context("Failed to get configuration state")?
             {
@@ -1733,7 +1733,7 @@ impl Bridge {
         configuration_account: &UInt256,
         configuration_contract: &ExistingContract,
     ) -> Result<()> {
-        // Get event type using base contract abi
+        // Get an event type using base contract abi
         let event_type = EventConfigurationBaseContract(configuration_contract)
             .get_type()
             .context("Failed to get event configuration type")?;
@@ -2145,24 +2145,14 @@ impl Bridge {
                     continue;
                 }
 
-                let Some(latest_lt) = self
-                    .context
-                    .tvm_subscriber
-                    .get_transaction_subscription_latest_lt(&configuration_account)
-                    .await
-                else {
-                    continue;
-                };
-
                 let Ok(Some(configuration)) = self
                     .context
                     .tvm_subscriber
-                    .get_contract_state_with_retry(&configuration_account, 3, Some(latest_lt))
+                    .get_contract_state(&configuration_account)
                     .await
                 else {
                     tracing::warn!(
                         configuration = %DisplayAddr(configuration_account),
-                        lt = %latest_lt,
                         "failed getting configuration state, skipping"
                     );
                     continue;
@@ -2345,7 +2335,7 @@ impl Bridge {
         let contract = self
             .context
             .tvm_subscriber
-            .get_contract_state(&event_account, None)
+            .get_contract_state(&event_account)
             .await?
             .ok_or(BridgeError::AccountNotFound(event_account.to_hex_string()))?;
 
@@ -2425,7 +2415,7 @@ impl Bridge {
                 };
                 let tvm_subscriber = &bridge.context.tvm_subscriber;
 
-                // Get current time from masterchain
+                // Get current time from the masterchain
                 let current_utime = tvm_subscriber.current_utime();
 
                 // Check expired configurations
