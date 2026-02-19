@@ -2145,19 +2145,6 @@ impl Bridge {
                     continue;
                 }
 
-                let Ok(Some(configuration)) = self
-                    .context
-                    .tvm_subscriber
-                    .get_contract_state(&configuration_account)
-                    .await
-                else {
-                    tracing::warn!(
-                        configuration = %DisplayAddr(configuration_account),
-                        "failed getting configuration state, skipping"
-                    );
-                    continue;
-                };
-
                 let bridge = self.clone();
                 let results_tx = results_tx.clone();
 
@@ -2165,19 +2152,19 @@ impl Bridge {
                     let start = Instant::now();
                     let result = match event_type {
                         EventType::EvmTvm => bridge
-                            .iterate_evm_tvm_events(configuration)
+                            .iterate_evm_tvm_events(configuration_account)
                             .await
                             .context("Failed to iterate EVM->TVM events"),
                         EventType::TvmEvm => bridge
-                            .iterate_tvm_evm_events(configuration)
+                            .iterate_tvm_evm_events(configuration_account)
                             .await
                             .context("Failed to iterate TVM->EVM events"),
                         EventType::SvmTvm => bridge
-                            .iterate_svm_tvm_events(configuration)
+                            .iterate_svm_tvm_events(configuration_account)
                             .await
                             .context("Failed to iterate SVM->TVM events"),
                         EventType::TvmSvm => bridge
-                            .iterate_tvm_svm_events(configuration)
+                            .iterate_tvm_svm_events(configuration_account)
                             .await
                             .context("Failed to iterate TVM->SVM events"),
                         EventType::TvmTvm => Ok(()),
@@ -2210,80 +2197,67 @@ impl Bridge {
         Ok(())
     }
 
-    async fn iterate_evm_tvm_events(
-        self: Arc<Self>,
-        configuration: ExistingContract,
-    ) -> Result<()> {
-        self.iterate_configuration_events(configuration, EventType::EvmTvm, |ctx| {
-            match EvmTvmEventConfigurationEvent::read_from_transaction(ctx) {
-                Some(EvmTvmEventConfigurationEvent::EventsDeployed { events }) => Some(events),
-                _ => None,
-            }
-        })
+    async fn iterate_evm_tvm_events(self: Arc<Self>, configuration_account: UInt256) -> Result<()> {
+        let set_end_block_number = evm_tvm_event_configuration_contract::set_end_block_number();
+        self.iterate_configuration_events(
+            configuration_account,
+            EventType::EvmTvm,
+            |tx, in_msg, tx_hash| {
+                parse_deployed_event_accounts(tx, in_msg, tx_hash, set_end_block_number.input_id)
+            },
+        )
         .await
     }
 
-    async fn iterate_tvm_evm_events(
-        self: Arc<Self>,
-        configuration: ExistingContract,
-    ) -> Result<()> {
-        self.iterate_configuration_events(configuration, EventType::TvmEvm, |ctx| {
-            match TvmEvmEventConfigurationEvent::read_from_transaction(ctx) {
-                Some(TvmEvmEventConfigurationEvent::EventDeployed { address }) => {
-                    Some(vec![address])
-                }
-                _ => None,
-            }
-        })
+    async fn iterate_tvm_evm_events(self: Arc<Self>, configuration_account: UInt256) -> Result<()> {
+        let set_end_timestamp = tvm_evm_event_configuration_contract::set_end_timestamp();
+        self.iterate_configuration_events(
+            configuration_account,
+            EventType::TvmEvm,
+            |tx, in_msg, tx_hash| {
+                parse_deployed_event_accounts(tx, in_msg, tx_hash, set_end_timestamp.input_id)
+            },
+        )
         .await
     }
 
-    async fn iterate_svm_tvm_events(
-        self: Arc<Self>,
-        configuration: ExistingContract,
-    ) -> Result<()> {
-        self.iterate_configuration_events(configuration, EventType::SvmTvm, |ctx| {
-            match SvmTvmEventConfigurationEvent::read_from_transaction(ctx) {
-                Some(SvmTvmEventConfigurationEvent::EventsDeployed { events }) => Some(events),
-                _ => None,
-            }
-        })
+    async fn iterate_svm_tvm_events(self: Arc<Self>, configuration_account: UInt256) -> Result<()> {
+        let set_end_timestamp = svm_tvm_event_configuration_contract::set_end_timestamp();
+        self.iterate_configuration_events(
+            configuration_account,
+            EventType::SvmTvm,
+            |tx, in_msg, tx_hash| {
+                parse_deployed_event_accounts(tx, in_msg, tx_hash, set_end_timestamp.input_id)
+            },
+        )
         .await
     }
 
-    async fn iterate_tvm_svm_events(
-        self: Arc<Self>,
-        configuration: ExistingContract,
-    ) -> Result<()> {
-        self.iterate_configuration_events(configuration, EventType::TvmSvm, |ctx| {
-            match TvmSvmEventConfigurationEvent::read_from_transaction(ctx) {
-                Some(TvmSvmEventConfigurationEvent::EventDeployed { address }) => {
-                    Some(vec![address])
-                }
-                _ => None,
-            }
-        })
+    async fn iterate_tvm_svm_events(self: Arc<Self>, configuration_account: UInt256) -> Result<()> {
+        let set_end_timestamp = tvm_svm_event_configuration_contract::set_end_timestamp();
+        self.iterate_configuration_events(
+            configuration_account,
+            EventType::TvmSvm,
+            |tx, in_msg, tx_hash| {
+                parse_deployed_event_accounts(tx, in_msg, tx_hash, set_end_timestamp.input_id)
+            },
+        )
         .await
     }
 
     async fn iterate_configuration_events<F>(
         self: Arc<Self>,
-        configuration: ExistingContract,
+        configuration_account: UInt256,
         event_type: EventType,
         mut extract_events: F,
     ) -> Result<()>
     where
-        F: for<'a> FnMut(&TxContext<'a>) -> Option<Vec<UInt256>>,
+        F: FnMut(&ton_block::Transaction, &ton_block::Message, &UInt256) -> Option<Vec<UInt256>>,
     {
-        let configuration_account = only_account_hash(configuration.account.addr());
         let transactions = self
             .context
             .tvm_subscriber
-            .get_transactions(
-                &configuration_account,
-                0,
-                Some(configuration.last_transaction_id.lt()),
-            )
+            .get_transactions(&configuration_account, 0, None)
             .await?;
 
         for transaction in transactions {
@@ -2295,26 +2269,19 @@ impl Bridge {
                 continue;
             };
 
-            let transaction_info = match transaction.description.read_struct() {
-                Ok(ton_block::TransactionDescr::Ordinary(info)) if !info.aborted => info,
-                _ => continue,
-            };
+            if !matches!(
+                transaction.description.read_struct(),
+                Ok(ton_block::TransactionDescr::Ordinary(info)) if !info.aborted
+            ) {
+                continue;
+            }
 
             let hash = match transaction.hash() {
                 Ok(hash) => hash,
                 Err(_) => continue,
             };
 
-            let ctx = TxContext {
-                account_state: &configuration,
-                account: &configuration_account,
-                transaction_hash: &hash,
-                transaction_info: &transaction_info,
-                transaction: &transaction,
-                in_msg,
-            };
-
-            if let Some(event_accounts) = extract_events(&ctx) {
+            if let Some(event_accounts) = extract_events(&transaction, in_msg, &hash) {
                 for event_account in event_accounts {
                     self.process_event_from_configuration(event_type, event_account)
                         .await?;
@@ -2846,11 +2813,53 @@ impl ReadFromTransaction for ConnectorEvent {
 
 impl TxContext<'_> {
     fn find_new_event_contract_addresses(&self) -> Vec<UInt256> {
-        let event = base_event_configuration_contract::events::new_event_contract();
+        find_new_event_contract_addresses(self.transaction, self.transaction_hash)
+    }
+}
 
-        let mut result: Vec<UInt256> = Vec::new();
-        self.iterate_events(|id, body| {
-            if id == event.id {
+fn parse_deployed_event_accounts(
+    transaction: &ton_block::Transaction,
+    in_msg: &ton_block::Message,
+    transaction_hash: &UInt256,
+    setter_input_id: u32,
+) -> Option<Vec<UInt256>> {
+    let in_msg_body = in_msg.body()?;
+    if read_function_id(&in_msg_body).ok()? == setter_input_id {
+        return None;
+    }
+
+    let events = find_new_event_contract_addresses(transaction, transaction_hash);
+    if events.is_empty() {
+        None
+    } else {
+        Some(events)
+    }
+}
+
+fn find_new_event_contract_addresses(
+    transaction: &ton_block::Transaction,
+    transaction_hash: &UInt256,
+) -> Vec<UInt256> {
+    let event = base_event_configuration_contract::events::new_event_contract();
+
+    let mut result = Vec::new();
+    transaction
+        .out_msgs
+        .iterate(|ton_block::InRefValue(message)| {
+            if !matches!(message.header(), ton_block::CommonMsgInfo::ExtOutMsgInfo(_)) {
+                return Ok(true);
+            }
+
+            let body = match message.body() {
+                Some(body) => body,
+                None => return Ok(true),
+            };
+
+            if let Ok(function_id) = read_function_id(&body) {
+                if function_id != event.id {
+                    return Ok(true);
+                }
+
                 match event.decode_input(body).and_then(|tokens| {
                     tokens
                         .unpack_first::<ton_block::MsgAddressInt>()
@@ -2859,16 +2868,18 @@ impl TxContext<'_> {
                     Ok(parsed) => result.push(only_account_hash(parsed)),
                     Err(e) => {
                         tracing::error!(
-                            tx = self.transaction_hash.to_hex_string(),
+                            tx = transaction_hash.to_hex_string(),
                             "failed to parse NewEventContract event: {e:?}",
                         );
                     }
                 }
             }
-        });
 
-        result
-    }
+            Ok(true)
+        })
+        .ok();
+
+    result
 }
 
 #[derive(Debug, Clone)]
