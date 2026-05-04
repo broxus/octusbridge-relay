@@ -6838,7 +6838,7 @@ dependencies = [
 [[package]]
 name = "ton_block"
 version = "1.9.73"
-source = "git+https://github.com/broxus/ton-labs-block#f1c3e222ee6a2b2ccf663f4f2df5e1335b95961a"
+source = "git+https://github.com/broxus/ton-labs-block#a4fd60ccd6c48e00863dfcf402cb1c045d92a1a3"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -6860,7 +6860,7 @@ dependencies = [
 [[package]]
 name = "ton_executor"
 version = "1.15.54"
-source = "git+https://github.com/broxus/ton-labs-executor#b299a0fc8f3c3ecc28e8e38a9c014be56d4ce52d"
+source = "git+https://github.com/broxus/ton-labs-executor#8cfdfbac2af31d40bf3926b01aeba7ca5d75c214"
 dependencies = [
  "anyhow",
  "log",
@@ -6895,7 +6895,7 @@ dependencies = [
 [[package]]
 name = "ton_vm"
 version = "1.8.29"
-source = "git+https://github.com/broxus/ton-labs-vm.git#211bd88f46fa257ac4b939447f209465d3e201e1"
+source = "git+https://github.com/broxus/ton-labs-vm.git#e693bd7f7a13624503801690a0b70ea5f9b930bd"
 dependencies = [
  "anyhow",
  "ed25519 1.5.3",
