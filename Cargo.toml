@@ -49,7 +49,7 @@ anyhow = "1"
 argh = "0.1"
 async-trait = "0.1"
 base64 = "0.22"
-borsh = "0.10.4"
+borsh = "0.10"
 broxus-util = { version = "0.2", default-features = false, features = ["serde", "config", "alloc", "public-ip"] }
 chacha20poly1305 = "0.10"
 chrono = "0.4"
