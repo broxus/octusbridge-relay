@@ -15,7 +15,7 @@ use tokio::sync::{Notify, Semaphore, oneshot};
 use tokio::time::timeout;
 use ton_types::UInt256;
 use web3::api::Namespace;
-use web3::types::{BlockNumber, FilterBuilder, H256, U64};
+use web3::types::{BlockNumber, CallRequest, FilterBuilder, H256, U64};
 use web3::{Transport, transports::Http};
 
 use self::models::*;
@@ -61,6 +61,10 @@ impl EvmSubscriberRegistry {
     /// Starts all subscribers
     pub fn start(&self) {
         for subscriber in &self.subscribers {
+            if subscriber.is_disabled() {
+                tracing::info!(chain_id = subscriber.chain_id, "subscriber is disabled");
+                continue;
+            }
             tracing::info!(chain_id = subscriber.chain_id, "starting subscriber");
             subscriber.start();
         }
@@ -69,6 +73,21 @@ impl EvmSubscriberRegistry {
     pub fn get_subscriber(&self, chain_id: u32) -> Option<Arc<EvmSubscriber>> {
         // Not cloning will deadlock
         self.subscribers.get(&chain_id).map(|x| x.clone())
+    }
+
+    pub fn is_disabled(&self, chain_id: u32) -> bool {
+        self.get_subscriber(chain_id)
+            .is_some_and(|subscriber| subscriber.is_disabled())
+    }
+
+    pub fn has_disabled(&self) -> bool {
+        self.subscribers
+            .iter()
+            .any(|subscriber| subscriber.is_disabled())
+    }
+
+    pub fn chain_ids(&self) -> Vec<u32> {
+        self.subscribers.iter().map(|entry| *entry.key()).collect()
     }
 
     pub fn subscribers(&self) -> &DashMap<u32, Arc<EvmSubscriber>> {
@@ -159,6 +178,10 @@ impl EvmSubscriber {
 
     pub fn chain_id_str(&self) -> &str {
         &self.chain_id_str
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.config.disabled
     }
 
     pub fn metrics(&self) -> EvmSubscriberMetrics {
@@ -693,6 +716,89 @@ impl EvmSubscriber {
     #[cfg(not(feature = "disable-staking"))]
     async fn get_balance(&self, address: EvmAddress) -> Result<web3::types::U256> {
         Ok(self.api.balance(address, None).await?)
+    }
+
+    pub async fn token_balance_of(
+        &self,
+        token: EvmAddress,
+        owner: EvmAddress,
+    ) -> Result<web3::types::U256> {
+        let mut data = Vec::with_capacity(36);
+        data.extend_from_slice(&web3::signing::keccak256(b"balanceOf(address)")[..4]);
+        data.extend_from_slice(&[0; 12]);
+        data.extend_from_slice(owner.as_bytes());
+
+        let request = CallRequest {
+            to: Some(token),
+            data: Some(web3::types::Bytes(data)),
+            ..Default::default()
+        };
+
+        let result = {
+            let _permit = self.pool.acquire().await;
+            retry(
+                || {
+                    timeout(
+                        Duration::from_secs(self.config.get_timeout_sec),
+                        self.api.call(request.clone(), None),
+                    )
+                },
+                generate_default_timeout_config(Duration::from_secs(
+                    self.config.maximum_failed_responses_time_sec,
+                )),
+                NetworkType::EVM(self.chain_id),
+                "get ERC-20 balance",
+            )
+            .await
+            .context("Timed out getting ERC-20 balance")??
+        };
+
+        if result.0.len() != 32 {
+            anyhow::bail!(
+                "Invalid ERC-20 balanceOf response length: {}",
+                result.0.len()
+            );
+        }
+
+        Ok(web3::types::U256::from_big_endian(&result.0))
+    }
+
+    pub async fn token_decimals(&self, token: EvmAddress) -> Result<u8> {
+        let request = CallRequest {
+            to: Some(token),
+            data: Some(web3::types::Bytes(
+                web3::signing::keccak256(b"decimals()")[..4].to_vec(),
+            )),
+            ..Default::default()
+        };
+
+        let result = {
+            let _permit = self.pool.acquire().await;
+            retry(
+                || {
+                    timeout(
+                        Duration::from_secs(self.config.get_timeout_sec),
+                        self.api.call(request.clone(), None),
+                    )
+                },
+                generate_default_timeout_config(Duration::from_secs(
+                    self.config.maximum_failed_responses_time_sec,
+                )),
+                NetworkType::EVM(self.chain_id),
+                "get ERC-20 decimals",
+            )
+            .await
+            .context("Timed out getting ERC-20 decimals")??
+        };
+
+        if result.0.len() != 32 || result.0[..31].iter().any(|byte| *byte != 0) {
+            anyhow::bail!(
+                "Invalid ERC-20 decimals response for {token:?}: {:?}",
+                result.0,
+            );
+        }
+
+        Ok(result.0[31])
     }
 
     async fn get_current_block_number(&self) -> Result<u64> {

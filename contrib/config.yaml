@@ -11,12 +11,20 @@ bridge_settings:
   bridge_address: "0:16c43aee96a19ad89066d4e8ec3929c202006499f54c5ad63627a0dadca91b11"
   # If set, relay will not participate in elections. Default: false
   ignore_elections: false
+  # Optional fail-closed backing checks for EVM-originated alien tokens.
+  # All ERC-20 representations are discovered from bridge_api_url.
+  # token_supply_guard:
+  #   max_excess_percent: 1
+  #   bridge_api_url: "https://.../"
   # EVM network configs
   evm_networks:
     # Ethereum
     - chain_id: 1
       # RPC node HTTP endpoint
       endpoint: "${ETH_MAINNET_URL}"
+      # Disabled networks are excluded from EVM->TVM subscriptions but are
+      # still included in token supply backing checks.
+      disabled: false
       # Timeout, used for simple getter requests. Default: 10
       get_timeout_sec: 10
       # Timeout, used for processing eth_getLogs response. Default: 120

@@ -13,6 +13,10 @@ pub struct EvmConfig {
     /// RPC endpoint
     pub endpoint: Url,
 
+    /// Keep this network available for read-only checks but do not subscribe to its events.
+    #[serde(default)]
+    pub disabled: bool,
+
     /// Timeout, used for simple getter requests. Default: 10
     #[serde(default = "const_u64::<10>")]
     pub get_timeout_sec: u64,

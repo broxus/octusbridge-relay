@@ -110,7 +110,6 @@ impl TvmEvmEventContract<'_> {
         Ok(event_init_data)
     }
 
-    #[cfg(feature = "ton")]
     pub fn event_decoded_data(&self) -> Result<TvmEvmEventDecodedData> {
         let function = tvm_evm_event_contract::get_decoded_data();
         let event_decoded_data = self
@@ -390,6 +389,41 @@ pub struct JettonMinterContract<'a>(pub &'a ExistingContract);
 
 #[cfg(feature = "ton")]
 impl JettonMinterContract<'_> {
+    fn get_jetton_data(&self) -> Result<Vec<StackItem>> {
+        let context = ExecutionContext {
+            clock: &nekoton_utils::SimpleClock,
+            account_stuff: &self.0.account,
+            libraries: &[],
+        };
+        let data = context.run_getter("get_jetton_data", &[])?;
+
+        if !data.is_ok || data.exit_code != 0 {
+            return Err(ExistingContractError::NonZeroResultCode(data.exit_code).into());
+        }
+
+        const EXPECTED_STACK_LEN: usize = 5;
+        if data.stack.len() != EXPECTED_STACK_LEN {
+            return Err(ExistingContractError::ItemsStackLenMismatch {
+                expected: EXPECTED_STACK_LEN,
+                actual: data.stack.len(),
+            }
+            .into());
+        }
+
+        Ok(data.stack)
+    }
+
+    pub fn total_supply(&self) -> Result<u128> {
+        Ok(self.get_jetton_data()?[0]
+            .as_integer()?
+            .into(0..=u128::MAX)?)
+    }
+
+    pub fn root_owner(&self) -> Result<ton_block::MsgAddressInt> {
+        const ADMIN_ADDRESS_ITEM_POS: usize = 2;
+        read_address(self.get_jetton_data()?, ADMIN_ADDRESS_ITEM_POS)
+    }
+
     pub fn get_wallet_address(
         &self,
         owner_address: &ton_block::MsgAddressInt,
@@ -492,6 +526,24 @@ impl TokenRootContract<'_> {
             )?
             .unpack_first()?;
         Ok(token_wallet)
+    }
+
+    pub fn total_supply(&self) -> Result<u128> {
+        let function = token_root_contract::total_supply();
+        let total_supply = self
+            .0
+            .run_local_responsible(function, &[answer_id()])?
+            .unpack_first()?;
+        Ok(total_supply)
+    }
+
+    pub fn root_owner(&self) -> Result<ton_block::MsgAddressInt> {
+        let function = token_root_contract::root_owner();
+        let root_owner = self
+            .0
+            .run_local_responsible(function, &[answer_id()])?
+            .unpack_first()?;
+        Ok(root_owner)
     }
 }
 

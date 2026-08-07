@@ -71,11 +71,26 @@ pub struct BridgeConfig {
     #[serde(default)]
     pub address_verification: AddressVerificationConfig,
 
+    /// Stops the relay when TVM supply of an alien token is not backed by EVM liquidity.
+    #[serde(default)]
+    pub token_supply_guard: Option<TokenSupplyGuardConfig>,
+
     /// Ton token metadata endpoint base url
     #[cfg(feature = "ton")]
     pub token_meta_base_url: url::Url,
 
     pub rpc_endpoints: Vec<url::Url>,
+}
+
+/// Supply backing checks for alien tokens bridged from EVM to TVM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenSupplyGuardConfig {
+    /// Allowed TVM supply excess over the EVM vault balance, in percent.
+    pub max_excess_percent: u32,
+
+    /// Bridge API which resolves TVM roots to ERC-20 representations on all networks.
+    pub bridge_api_url: url::Url,
 }
 
 /// EVM address verification settings

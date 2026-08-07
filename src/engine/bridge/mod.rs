@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use borsh::BorshDeserialize;
 #[allow(unused_imports)]
 use evm_tvm_abi_converter::{
@@ -17,6 +17,7 @@ use evm_tvm_abi_converter::{
 use nekoton_abi::*;
 use nekoton_utils::TrustMe;
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::Deserialize;
 use solana_bridge::bridge_errors::SolanaBridgeError;
 use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::rpc_request::{RpcError, RpcResponseErrorData};
@@ -851,6 +852,15 @@ impl Bridge {
 
                 // Get the required subscriber
                 match evm_subscribers.get_subscriber(chain_id) {
+                    Some(subscriber) if subscriber.is_disabled() => {
+                        tracing::info!(
+                            event = %DisplayAddr(account),
+                            chain_id,
+                            "ignoring EVM->TVM event for disabled network",
+                        );
+                        self.evm_tvm_events_state.remove(&account);
+                        return Ok(());
+                    }
                     Some(subscriber) => (
                         subscriber,
                         event_emitter,
@@ -964,6 +974,20 @@ impl Bridge {
         // Get event details
         let event_init_data = TvmEvmEventContract(&contract).event_init_data()?;
 
+        if self.context.evm_subscribers.has_disabled() {
+            let event_decoded_data = TvmEvmEventContract(&contract).event_decoded_data()?;
+            let chain_id = parse_evm_chain_id(&event_decoded_data.chain_id)?;
+            if self.context.evm_subscribers.is_disabled(chain_id) {
+                tracing::info!(
+                    event = %DisplayAddr(account),
+                    chain_id,
+                    "ignoring TVM->EVM event for disabled network",
+                );
+                self.tvm_evm_events_state.remove(&account);
+                return Ok(());
+            }
+        }
+
         struct ConfigData {
             proxy: [u8; 20],
             data: Result<Vec<ton_abi::Token>>,
@@ -1007,6 +1031,100 @@ impl Bridge {
             }) => {
                 #[allow(unused_mut)]
                 let mut verification_error = None;
+
+                if let Some(guard) = &self.context.settings.token_supply_guard {
+                    let guard_result: Result<()> = async {
+                        let event_decoded_data =
+                            TvmEvmEventContract(&contract).event_decoded_data()?;
+                        let target_chain_id = parse_evm_chain_id(&event_decoded_data.chain_id)?;
+                        let token_root = only_account_hash(&event_decoded_data.token);
+                        let root_contract = tvm_subscriber
+                            .wait_contract_state(&token_root)
+                            .await
+                            .context("Failed to get guarded token root state")?;
+
+                        #[cfg(not(feature = "ton"))]
+                        let (is_alien, tvm_supply) = {
+                            let token_root = TokenRootContract(&root_contract);
+                            (
+                                token_root.root_owner()? == event_decoded_data.proxy,
+                                token_root.total_supply()?,
+                            )
+                        };
+                        #[cfg(feature = "ton")]
+                        let (is_alien, tvm_supply) = {
+                            let token_root = JettonMinterContract(&root_contract);
+                            (
+                                token_root.root_owner()? == event_decoded_data.proxy,
+                                token_root.total_supply()?,
+                            )
+                        };
+
+                        if !is_alien {
+                            return Ok(());
+                        }
+
+                        let mappings = load_evm_token_mappings(
+                            &guard.bridge_api_url,
+                            &self.context.evm_subscribers.chain_ids(),
+                            &event_decoded_data.token.to_string(),
+                        )
+                        .await?;
+                        if mappings.is_empty() {
+                            anyhow::bail!(
+                                "No EVM collateral mappings found for alien TVM token {}",
+                                event_decoded_data.token,
+                            );
+                        }
+
+                        let vault = ethabi::Address::from(proxy);
+                        let mut evm_backing = nekoton_abi::num_bigint::BigUint::default();
+                        for mapping in &mappings {
+                            let evm_subscriber = self
+                                .context
+                                .evm_subscribers
+                                .get_subscriber(mapping.chain_id)
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "EVM subscriber not found for collateral chain {}",
+                                        mapping.chain_id
+                                    )
+                                })?;
+                            let balance = evm_subscriber
+                                .token_balance_of(mapping.token, vault)
+                                .await?;
+                            let evm_decimals = evm_subscriber.token_decimals(mapping.token).await?;
+                            evm_backing +=
+                                normalize_token_amount(balance, evm_decimals, mapping.tvm_decimals);
+                        }
+
+                        if exceeds_supply_limit(tvm_supply, &evm_backing, guard.max_excess_percent)
+                        {
+                            anyhow::bail!(
+                                "TVM token supply exceeds aggregate EVM vault backing: \
+                                 event={account:x} target_chain_id={target_chain_id} token_root={} \
+                                 vault={} tvm_supply={tvm_supply} evm_backing={evm_backing} \
+                                 collateral_networks={} max_excess_percent={}",
+                                event_decoded_data.token,
+                                EvmAddressWrapper(&vault),
+                                mappings.len(),
+                                guard.max_excess_percent,
+                            );
+                        }
+                        Ok(())
+                    }
+                    .await;
+
+                    if let Err(e) = guard_result {
+                        tracing::error!(
+                            event = %DisplayAddr(account),
+                            "FATAL ERROR. Token supply guard failed: {e:#}"
+                        );
+                        self.context.shutdown_requests_tx.send(())?;
+                        return Ok(());
+                    }
+                }
+
                 #[cfg(feature = "ton")]
                 if verify_token_meta {
                     tracing::info!(
@@ -2569,6 +2687,308 @@ impl Bridge {
                 tracing::error!("failed to {name}: {e:?}");
             }
         });
+    }
+}
+
+fn parse_evm_chain_id(chain_id: &UInt256) -> Result<u32> {
+    let bytes = chain_id.as_slice();
+    if bytes[..28].iter().any(|byte| *byte != 0) {
+        anyhow::bail!("TVM->EVM event chain id does not fit u32: {chain_id:x}");
+    }
+    Ok(u32::from_be_bytes(bytes[28..].try_into()?))
+}
+
+fn exceeds_supply_limit(
+    tvm_supply: u128,
+    evm_backing: &nekoton_abi::num_bigint::BigUint,
+    max_excess_percent: u32,
+) -> bool {
+    use nekoton_abi::num_bigint::BigUint;
+
+    BigUint::from(tvm_supply) * 100u32
+        > evm_backing * (BigUint::from(100u32) + BigUint::from(max_excess_percent))
+}
+
+fn normalize_token_amount(
+    amount: web3::types::U256,
+    from_decimals: u8,
+    to_decimals: u8,
+) -> nekoton_abi::num_bigint::BigUint {
+    use nekoton_abi::num_bigint::BigUint;
+
+    let mut amount_bytes = [0; 32];
+    amount.to_big_endian(&mut amount_bytes);
+    let amount = BigUint::from_bytes_be(&amount_bytes);
+    match from_decimals.cmp(&to_decimals) {
+        std::cmp::Ordering::Equal => amount,
+        std::cmp::Ordering::Greater => {
+            amount / BigUint::from(10u8).pow((from_decimals - to_decimals) as u32)
+        }
+        std::cmp::Ordering::Less => {
+            amount * BigUint::from(10u8).pow((to_decimals - from_decimals) as u32)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeAssetsResponse {
+    chain_id_tokens: FxHashMap<u32, Vec<BridgeAssetToken>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeAssetToken {
+    address: String,
+    evm_address: String,
+    decimals: u8,
+}
+
+#[derive(Clone, Copy)]
+struct EvmTokenMapping {
+    chain_id: u32,
+    token: ethabi::Address,
+    tvm_decimals: u8,
+}
+
+async fn load_evm_token_mappings(
+    bridge_api_url: &url::Url,
+    chain_ids: &[u32],
+    token_root: &str,
+) -> Result<Vec<EvmTokenMapping>> {
+    let assets = load_bridge_assets(bridge_api_url, chain_ids).await?;
+    extract_evm_token_mappings(&assets, token_root)
+}
+
+fn extract_evm_token_mappings(
+    assets: &BridgeAssetsResponse,
+    token_root: &str,
+) -> Result<Vec<EvmTokenMapping>> {
+    let mut unique_mappings = FxHashSet::default();
+    for (chain_id, tokens) in &assets.chain_id_tokens {
+        for token in tokens.iter().filter(|token| token.address == token_root) {
+            let evm_token = ethabi::Address::from_str(&token.evm_address)
+                .context("Invalid EVM token address in bridge API response")?;
+            unique_mappings.insert((*chain_id, evm_token, token.decimals));
+        }
+    }
+
+    Ok(unique_mappings
+        .into_iter()
+        .map(|(chain_id, token, tvm_decimals)| EvmTokenMapping {
+            chain_id,
+            token,
+            tvm_decimals,
+        })
+        .collect())
+}
+
+async fn load_bridge_assets(
+    bridge_api_url: &url::Url,
+    chain_ids: &[u32],
+) -> Result<BridgeAssetsResponse> {
+    let url = bridge_api_url.join("v1/transfers/tokens_info")?;
+    reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({ "chainIds": chain_ids }))
+        .send()
+        .await
+        .context("Failed to load bridge assets")?
+        .error_for_status()
+        .context("Bridge assets request failed")?
+        .json::<BridgeAssetsResponse>()
+        .await
+        .context("Failed to parse bridge assets")
+}
+
+#[cfg(all(test, not(feature = "ton")))]
+mod tests {
+    use std::str::FromStr;
+
+    use super::{
+        exceeds_supply_limit, extract_evm_token_mappings, load_bridge_assets,
+        normalize_token_amount,
+    };
+    use crate::config::EvmConfig;
+    use crate::engine::evm_subscriber::EvmSubscriberRegistry;
+    use crate::engine::tvm_contracts::TokenRootContract;
+    use crate::utils::ExistingContract;
+    use anyhow::{Context, Result};
+    use ton_block::MsgAddressInt;
+    use tvm_rpc_client::{ClientOptions, RpcClient};
+    use url::Url;
+    use web3::types::U256;
+
+    const EVERSCALE_BRIDGE_API_URL: &str = "https://api.octusbridge.io/";
+    const EVERSCALE_RPC_URL: &str = "https://jrpc.everwallet.net/proto";
+    const EVERSCALE_ALIEN_PROXY: &str =
+        "0:85c3287c6114e420ae82ec1364da3c760a5789f383213ef3cedef5d8c3d126fd";
+    const EVM_MULTIVAULT: &str = "0x54c55369a6900731d22eacb0df7c0253cf19dfff";
+
+    #[test]
+    fn supply_guard_respects_the_configured_excess() {
+        let backing = nekoton_abi::num_bigint::BigUint::from(100u8);
+        assert!(!exceeds_supply_limit(101, &backing, 1));
+        assert!(exceeds_supply_limit(102, &backing, 1));
+        assert!(exceeds_supply_limit(1, &Default::default(), 1));
+    }
+
+    #[test]
+    fn supply_guard_normalizes_evm_decimals() {
+        assert_eq!(
+            normalize_token_amount(U256::from(5_420_654_700_313_478_997_907u128), 18, 6),
+            nekoton_abi::num_bigint::BigUint::from(5_420_654_700u64),
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Everscale, EVM RPCs, and bridge-api"]
+    async fn everscale_alien_token_supply_guard_with_hardcoded_production_endpoints() -> Result<()>
+    {
+        let networks = [
+            (1, "https://ethereum-rpc.publicnode.com"),
+            (56, "https://bsc-rpc.publicnode.com"),
+            (137, "https://polygon-bor-rpc.publicnode.com"),
+            (250, "https://rpcapi.fantom.network"),
+            (43114, "https://avalanche-c-chain-rpc.publicnode.com"),
+        ];
+        let chain_ids = networks
+            .iter()
+            .map(|(chain_id, _)| *chain_id)
+            .collect::<Vec<_>>();
+        let bridge_api_url = Url::parse(EVERSCALE_BRIDGE_API_URL)?;
+        let assets = load_bridge_assets(&bridge_api_url, &chain_ids).await?;
+
+        let rpc_client = RpcClient::new(
+            vec![Url::parse(EVERSCALE_RPC_URL)?],
+            ClientOptions::default(),
+        )
+        .await?;
+        let mut roots = assets
+            .chain_id_tokens
+            .values()
+            .flatten()
+            .map(|token| token.address.clone())
+            .collect::<Vec<_>>();
+        roots.sort_unstable();
+        roots.dedup();
+
+        let subscribers =
+            EvmSubscriberRegistry::new(networks.into_iter().map(|(chain_id, endpoint)| {
+                EvmConfig {
+                    chain_id,
+                    endpoint: Url::parse(endpoint).expect("hardcoded EVM RPC URL is valid"),
+                    disabled: true,
+                    get_timeout_sec: 15,
+                    blocks_processing_timeout_sec: 120,
+                    pool_size: 1,
+                    poll_interval_sec: 60,
+                    max_block_range: None,
+                    maximum_failed_responses_time_sec: 30,
+                }
+            }))
+            .await?;
+        let vault = ethabi::Address::from_str(EVM_MULTIVAULT)?;
+        let mut checked_tokens = 0;
+        let mut supply_mismatches = Vec::new();
+
+        for token_root in roots {
+            let root = MsgAddressInt::from_str(&token_root)
+                .context("invalid TVM root returned by Everscale API")?;
+            let state = match rpc_client.get_contract_state(&root, None).await {
+                Ok(Some(state)) => state,
+                Ok(None) => {
+                    println!("token_root={token_root} skipped=not_deployed");
+                    continue;
+                }
+                Err(e) => {
+                    println!("token_root={token_root} skipped=state_error error={e:#}");
+                    continue;
+                }
+            };
+            let root_contract = ExistingContract {
+                account: state.account,
+                last_transaction_id: state.last_transaction_id,
+            };
+            let root_contract = TokenRootContract(&root_contract);
+            let root_owner = match root_contract.root_owner() {
+                Ok(root_owner) => root_owner,
+                Err(e) => {
+                    println!("token_root={token_root} skipped=root_owner_error error={e:#}");
+                    continue;
+                }
+            };
+            if root_owner.to_string() != EVERSCALE_ALIEN_PROXY {
+                println!("token_root={token_root} skipped=not_alien root_owner={root_owner}");
+                continue;
+            };
+
+            let tvm_supply = match root_contract.total_supply() {
+                Ok(tvm_supply) => tvm_supply,
+                Err(e) => {
+                    println!("token_root={token_root} skipped=total_supply_error error={e:#}");
+                    continue;
+                }
+            };
+            let mappings = extract_evm_token_mappings(&assets, &token_root)?;
+            if mappings.is_empty() {
+                println!("token_root={token_root} skipped=no_evm_mappings");
+                continue;
+            }
+
+            let mut evm_backing = nekoton_abi::num_bigint::BigUint::default();
+            let mut balance_error = false;
+            for mapping in &mappings {
+                let subscriber = subscribers
+                    .get_subscriber(mapping.chain_id)
+                    .context("missing hardcoded EVM subscriber")?;
+                match subscriber.token_balance_of(mapping.token, vault).await {
+                    Ok(balance) => {
+                        let evm_decimals = subscriber.token_decimals(mapping.token).await?;
+                        let normalized_balance =
+                            normalize_token_amount(balance, evm_decimals, mapping.tvm_decimals);
+                        println!(
+                            "token_root={token_root} chain_id={} evm_token={:?} evm_decimals={evm_decimals} tvm_decimals={} vault_balance={balance} normalized_vault_balance={normalized_balance}",
+                            mapping.chain_id, mapping.token, mapping.tvm_decimals,
+                        );
+                        evm_backing += normalized_balance;
+                    }
+                    Err(e) => {
+                        println!(
+                            "token_root={token_root} chain_id={} skipped=balance_error error={e:#}",
+                            mapping.chain_id,
+                        );
+                        balance_error = true;
+                        break;
+                    }
+                }
+            }
+            if balance_error {
+                continue;
+            }
+
+            checked_tokens += 1;
+            let exceeds_limit = exceeds_supply_limit(tvm_supply, &evm_backing, 1);
+            println!(
+                "token_root={token_root} tvm_supply={tvm_supply} evm_backing={evm_backing} max_excess_percent=1 exceeds_limit={exceeds_limit}"
+            );
+            if exceeds_limit {
+                supply_mismatches.push(format!(
+                    "{token_root}: supply={tvm_supply}, backing={evm_backing}",
+                ));
+            }
+        }
+
+        anyhow::ensure!(
+            checked_tokens > 0,
+            "no Everscale alien token was fully checked"
+        );
+        anyhow::ensure!(
+            supply_mismatches.is_empty(),
+            "Everscale alien token supply is not backed within 1%: {}",
+            supply_mismatches.join("; "),
+        );
+        Ok(())
     }
 }
 

@@ -1,4 +1,6 @@
 use crate::utils::ExistingContract;
+use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::str::FromStr;
 use tokio::sync::{Mutex, OnceCell};
 use ton_block::MsgAddressInt;
@@ -43,6 +45,99 @@ async fn get_existing_contract(address: &str) -> ExistingContract {
         account: state.account,
         last_transaction_id: state.last_transaction_id,
     }
+}
+
+#[cfg(not(feature = "ton"))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeAssetsResponse {
+    chain_id_tokens: std::collections::HashMap<u32, Vec<BridgeAssetToken>>,
+}
+
+#[cfg(not(feature = "ton"))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeAssetToken {
+    address: String,
+}
+
+#[cfg(not(feature = "ton"))]
+#[tokio::test]
+#[ignore = "requires local config.yaml with token_supply_guard and live Venom RPC"]
+async fn venom_token_root_getters_from_config() -> Result<()> {
+    let config: crate::config::AppConfig = broxus_util::read_config("config.yaml")?;
+    let guard = config
+        .bridge_settings
+        .token_supply_guard
+        .as_ref()
+        .context("token_supply_guard must be configured")?;
+
+    let chain_ids = config
+        .bridge_settings
+        .evm_networks
+        .iter()
+        .map(|network| network.chain_id)
+        .collect::<Vec<_>>();
+    let assets = reqwest::Client::new()
+        .post(guard.bridge_api_url.join("v1/transfers/tokens_info")?)
+        .json(&serde_json::json!({ "chainIds": chain_ids }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<BridgeAssetsResponse>()
+        .await?;
+    let rpc_client = RpcClient::new(
+        config.bridge_settings.rpc_endpoints,
+        ClientOptions::default(),
+    )
+    .await?;
+
+    let roots = assets
+        .chain_id_tokens
+        .into_values()
+        .flatten()
+        .map(|token| token.address)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !roots.is_empty(),
+        "Bridge API returned no TVM token mappings for configured EVM networks"
+    );
+
+    let mut failures = Vec::new();
+    for root in roots {
+        let root = MsgAddressInt::from_str(&root).context("invalid TVM root in bridge assets")?;
+        let Some(state) = rpc_client.get_contract_state(&root, None).await? else {
+            failures.push(format!("{root}: contract is not deployed"));
+            continue;
+        };
+        let contract = ExistingContract {
+            account: state.account,
+            last_transaction_id: state.last_transaction_id,
+        };
+
+        let token_root = TokenRootContract(&contract);
+        let total_supply = token_root.total_supply();
+        let root_owner = token_root.root_owner();
+        match (total_supply, root_owner) {
+            (Ok(total_supply), Ok(root_owner)) => {
+                tracing::info!(token_root = %root, total_supply, %root_owner, "verified Venom token root getters");
+                return Ok(());
+            }
+            (total_supply, root_owner) if failures.len() < 5 => {
+                failures.push(format!(
+                    "{root}: totalSupply={:?}, rootOwner={:?}",
+                    total_supply.err(),
+                    root_owner.err(),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    anyhow::bail!(
+        "No token root from bridge API supports totalSupply and rootOwner. Attempts: {}",
+        failures.join("; "),
+    )
 }
 
 #[cfg(feature = "ton")]
